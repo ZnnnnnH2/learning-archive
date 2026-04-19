@@ -20,11 +20,25 @@ pub struct SessionInfo {
     pub cols: u16,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtyAttachSnapshot {
+    pub data: String,
+    pub last_seq: u64,
+}
+
+struct BufferedOutput {
+    attached: bool,
+    last_seq: u64,
+    chunks: Vec<Vec<u8>>,
+}
+
 pub struct Session {
     pub info: Mutex<SessionInfo>,
     writer: Mutex<Box<dyn Write + Send>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     killer: Mutex<Box<dyn ChildKiller + Send + Sync>>,
+    buffered_output: Mutex<BufferedOutput>,
 }
 
 impl Session {
@@ -53,6 +67,30 @@ impl Session {
     pub fn kill(&self) {
         let mut k = self.killer.lock();
         let _ = k.kill();
+    }
+
+    pub fn record_output(&self, data: &[u8]) -> u64 {
+        let mut buffered = self.buffered_output.lock();
+        buffered.last_seq += 1;
+        if !buffered.attached {
+            buffered.chunks.push(data.to_vec());
+        }
+        buffered.last_seq
+    }
+
+    pub fn attach_output(&self) -> PtyAttachSnapshot {
+        let mut buffered = self.buffered_output.lock();
+        let total_len: usize = buffered.chunks.iter().map(Vec::len).sum();
+        let mut joined = Vec::with_capacity(total_len);
+        for chunk in buffered.chunks.drain(..) {
+            joined.extend_from_slice(&chunk);
+        }
+        buffered.attached = true;
+
+        PtyAttachSnapshot {
+            data: B64.encode(joined),
+            last_seq: buffered.last_seq,
+        }
     }
 }
 
@@ -140,6 +178,11 @@ pub fn spawn_session(
         writer: Mutex::new(writer),
         master: Mutex::new(pair.master),
         killer: Mutex::new(killer),
+        buffered_output: Mutex::new(BufferedOutput {
+            attached: false,
+            last_seq: 0,
+            chunks: Vec::new(),
+        }),
     });
 
     manager.insert(id.clone(), session);
@@ -148,16 +191,18 @@ pub fn spawn_session(
     {
         let app = app.clone();
         let id = id.clone();
+        let session = manager.get(&id).expect("session inserted before reader");
         thread::spawn(move || {
             let mut buf = [0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        let seq = session.record_output(&buf[..n]);
                         let data = B64.encode(&buf[..n]);
                         let _ = app.emit(
                             "pty://data",
-                            serde_json::json!({ "sessionId": id, "data": data }),
+                            serde_json::json!({ "sessionId": id, "data": data, "seq": seq }),
                         );
                     }
                     Err(_) => break,

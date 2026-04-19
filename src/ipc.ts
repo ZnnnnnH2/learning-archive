@@ -15,6 +15,17 @@ export async function ptyWrite(sessionId: string, data: string): Promise<void> {
   await invoke("pty_write", { sessionId, data });
 }
 
+export interface PtyAttachSnapshot {
+  data: string;
+  lastSeq: number;
+}
+
+export async function ptyAttach(
+  sessionId: string
+): Promise<PtyAttachSnapshot> {
+  return invoke<PtyAttachSnapshot>("pty_attach", { sessionId });
+}
+
 export async function ptyResize(
   sessionId: string,
   rows: number,
@@ -42,6 +53,7 @@ export async function pathExists(path: string): Promise<boolean> {
 export interface PtyDataEvent {
   sessionId: string;
   data: string;
+  seq: number;
 }
 
 export interface PtyExitEvent {

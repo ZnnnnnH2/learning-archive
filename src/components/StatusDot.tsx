@@ -1,3 +1,4 @@
+import { BellRing } from "lucide-react";
 import { cn } from "../utils";
 import type { ShellStatus } from "../types";
 
@@ -21,11 +22,9 @@ export function StatusDot({ status, hasUnread, className }: Props) {
   }
   if (status === "waiting") {
     return (
-      <span
-        className={cn(
-          "inline-block h-2 w-2 rounded-full bg-warn anim-pulse",
-          className
-        )}
+      <BellRing
+        size={12}
+        className={cn("shrink-0 text-warn anim-pulse", className)}
         aria-label="waiting for input"
       />
     );

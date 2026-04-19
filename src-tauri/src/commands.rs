@@ -1,5 +1,5 @@
 use crate::persist::{self, SessionState};
-use crate::pty::{spawn_session, PtyManager, SessionInfo};
+use crate::pty::{spawn_session, PtyAttachSnapshot, PtyManager, SessionInfo};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use std::sync::Arc;
 use tauri::{AppHandle, State};
@@ -50,6 +50,15 @@ pub fn pty_kill(state: State<Arc<PtyManager>>, session_id: String) -> Result<(),
 #[tauri::command]
 pub fn pty_list(state: State<Arc<PtyManager>>) -> Vec<SessionInfo> {
     state.list()
+}
+
+#[tauri::command]
+pub fn pty_attach(
+    state: State<Arc<PtyManager>>,
+    session_id: String,
+) -> Result<PtyAttachSnapshot, String> {
+    let session = state.get(&session_id).ok_or("session not found")?;
+    Ok(session.attach_output())
 }
 
 #[tauri::command]

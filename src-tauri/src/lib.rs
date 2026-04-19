@@ -25,6 +25,7 @@ pub fn run() {
             commands::pty_resize,
             commands::pty_kill,
             commands::pty_list,
+            commands::pty_attach,
             commands::load_state,
             commands::save_state,
             commands::path_exists,

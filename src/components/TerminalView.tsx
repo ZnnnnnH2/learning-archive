@@ -5,8 +5,11 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
+  ptyAttach,
   onPtyData,
   onPtyExit,
+  pathExists,
+  type PtyDataEvent,
   ptyResize,
   ptySpawn,
   ptyWrite,
@@ -49,6 +52,9 @@ export function TerminalView({ shell, active }: Props) {
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(shell.sessionId);
+  const attachedSeqRef = useRef(0);
+  const attachCompleteRef = useRef(false);
+  const pendingDataRef = useRef<PtyDataEvent[]>([]);
   const disposedRef = useRef(false);
 
   // Store getters (avoid re-subscribing on every change)
@@ -63,6 +69,9 @@ export function TerminalView({ shell, active }: Props) {
   useLayoutEffect(() => {
     if (!hostRef.current) return;
     disposedRef.current = false;
+    attachedSeqRef.current = 0;
+    attachCompleteRef.current = false;
+    pendingDataRef.current = [];
 
     const term = new Terminal({
       fontFamily:
@@ -99,6 +108,13 @@ export function TerminalView({ shell, active }: Props) {
     termRef.current = term;
     fitRef.current = fit;
 
+    const markWaiting = () => {
+      setShellStatus(shell.id, "waiting");
+      if (useAppStore.getState().activeShellId !== shell.id) {
+        setShellUnread(shell.id, true);
+      }
+    };
+
     // OSC 7 — cwd updates from shell
     term.parser.registerOscHandler(7, (payload) => {
       // format: file://hostname/absolute/path
@@ -116,22 +132,60 @@ export function TerminalView({ shell, active }: Props) {
 
     // OSC 9 — typical "bell" / notification
     term.parser.registerOscHandler(9, () => {
-      setShellStatus(shell.id, "waiting");
-      if (useAppStore.getState().activeShellId !== shell.id) {
-        setShellUnread(shell.id, true);
-      }
+      markWaiting();
       return false;
+    });
+    const onBell = term.onBell(() => {
+      markWaiting();
     });
 
     let unlistenData: UnlistenFn | null = null;
     let unlistenExit: UnlistenFn | null = null;
 
+    const writeChunk = (e: PtyDataEvent) => {
+      attachedSeqRef.current = e.seq;
+      const bytes = base64ToBytes(e.data);
+      term.write(bytes);
+      setShellStatus(shell.id, "running");
+      if (useAppStore.getState().activeShellId !== shell.id) {
+        setShellUnread(shell.id, true);
+      }
+    };
+
     const init = async () => {
+      unlistenData = await onPtyData((e) => {
+        if (e.sessionId !== sessionIdRef.current) return;
+        if (!attachCompleteRef.current) {
+          pendingDataRef.current.push(e);
+          return;
+        }
+        if (e.seq <= attachedSeqRef.current) {
+          return;
+        }
+        writeChunk(e);
+      });
+      unlistenExit = await onPtyExit((e) => {
+        if (e.sessionId !== sessionIdRef.current) return;
+        setShellExit(shell.id, e.code);
+        sessionIdRef.current = null;
+        attachedSeqRef.current = 0;
+        attachCompleteRef.current = false;
+        pendingDataRef.current = [];
+      });
+
       const rows = term.rows;
       const cols = term.cols;
       let sid = sessionIdRef.current;
       if (!sid) {
-        sid = await ptySpawn(shell.projectId, shell.cwd, rows, cols);
+        const projectPath =
+          useAppStore.getState().projects[shell.projectId]?.path ?? shell.cwd;
+        let spawnCwd = shell.cwd;
+        if (!(await pathExists(spawnCwd)) && projectPath !== spawnCwd) {
+          spawnCwd = projectPath;
+          setShellCwd(shell.id, projectPath);
+        }
+
+        sid = await ptySpawn(shell.projectId, spawnCwd, rows, cols);
         sessionIdRef.current = sid;
         if (!disposedRef.current) setShellSession(shell.id, sid);
       } else {
@@ -140,26 +194,43 @@ export function TerminalView({ shell, active }: Props) {
       }
       setShellSize(shell.id, cols, rows);
 
-      unlistenData = await onPtyData((e) => {
-        if (e.sessionId !== sessionIdRef.current) return;
-        const bytes = base64ToBytes(e.data);
+      const snapshot = await ptyAttach(sid);
+      if (disposedRef.current || sessionIdRef.current !== sid) return;
+
+      attachedSeqRef.current = snapshot.lastSeq;
+      if (snapshot.data) {
+        const bytes = base64ToBytes(snapshot.data);
         term.write(bytes);
         setShellStatus(shell.id, "running");
         if (useAppStore.getState().activeShellId !== shell.id) {
           setShellUnread(shell.id, true);
         }
-      });
-      unlistenExit = await onPtyExit((e) => {
-        if (e.sessionId !== sessionIdRef.current) return;
-        setShellExit(shell.id, e.code);
-        sessionIdRef.current = null;
-      });
+      }
+
+      attachCompleteRef.current = true;
+
+      const pending = pendingDataRef.current
+        .filter((e) => e.seq > attachedSeqRef.current)
+        .sort((a, b) => a.seq - b.seq);
+      pendingDataRef.current = [];
+      for (const e of pending) {
+        writeChunk(e);
+      }
     };
-    init().catch((e) => console.error("init terminal failed", e));
+    init().catch((e) => {
+      const message = e instanceof Error ? e.message : String(e);
+      setShellStatus(shell.id, "error");
+      term.writeln("[SideShell] Failed to start shell.");
+      term.writeln(message);
+      console.error("init terminal failed", e);
+    });
 
     const onInput = term.onData((data) => {
       const sid = sessionIdRef.current;
       if (!sid) return;
+      if (useAppStore.getState().shells[shell.id]?.status === "waiting") {
+        setShellStatus(shell.id, "running");
+      }
       ptyWrite(sid, stringToBase64(data)).catch(() => {});
     });
 
@@ -168,7 +239,9 @@ export function TerminalView({ shell, active }: Props) {
     const quietHandler = term.onWriteParsed(() => {
       if (idleTimer) clearTimeout(idleTimer);
       idleTimer = setTimeout(() => {
-        setShellStatus(shell.id, "idle");
+        if (useAppStore.getState().shells[shell.id]?.status === "running") {
+          setShellStatus(shell.id, "idle");
+        }
       }, 400);
     });
 
@@ -193,6 +266,7 @@ export function TerminalView({ shell, active }: Props) {
       if (idleTimer) clearTimeout(idleTimer);
       ro.disconnect();
       quietHandler.dispose();
+      onBell.dispose();
       onInput.dispose();
       unlistenData?.();
       unlistenExit?.();
