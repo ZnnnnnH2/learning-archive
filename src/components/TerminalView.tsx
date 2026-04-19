@@ -146,7 +146,9 @@ export function TerminalView({ shell, active }: Props) {
       attachedSeqRef.current = e.seq;
       const bytes = base64ToBytes(e.data);
       term.write(bytes);
-      setShellStatus(shell.id, "running");
+      if (useAppStore.getState().shells[shell.id]?.status !== "waiting") {
+        setShellStatus(shell.id, "running");
+      }
       if (useAppStore.getState().activeShellId !== shell.id) {
         setShellUnread(shell.id, true);
       }
