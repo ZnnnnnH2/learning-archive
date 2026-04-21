@@ -14,11 +14,8 @@ import {
   createBellNotification,
   detectShellStatusFromOsc133,
   detectShellStatusFromTitle,
-  parseOsc777Notification,
   parseOsc9Notification,
-  type ParsedTerminalNotification,
 } from "../shellSignals";
-import { sendDesktopNotification } from "../desktopNotifications";
 import {
   ptyAttach,
   onPtyData,
@@ -34,6 +31,7 @@ import {
   buildPtySpawnOptions,
   DEFAULT_TERMINAL_FONT_FAMILY,
 } from "../terminalConfig";
+import { dismissShellAlert, raiseShellAlert } from "../shellAlerts";
 import { base64ToBytes, stringToBase64 } from "../utils";
 import { useAppStore } from "../store";
 import type { Shell } from "../types";
@@ -82,7 +80,6 @@ export function TerminalView({ shell, active }: Props) {
   const restoreResolveTimerRef = useRef<number | null>(null);
   const disposedRef = useRef(false);
   const typedInputRef = useRef("");
-  const lastAttentionAtRef = useRef(0);
   const terminalFontFamily = useAppStore(
     (s) => s.terminalSettings.fontFamily
   );
@@ -263,28 +260,8 @@ export function TerminalView({ shell, active }: Props) {
     termRef.current = term;
     fitRef.current = fit;
 
-    const markAttention = (notification: ParsedTerminalNotification) => {
-      const now = Date.now();
-      if (now - lastAttentionAtRef.current < 800) {
-        return;
-      }
-      lastAttentionAtRef.current = now;
-      setShellStatus(shell.id, "waiting");
-      setShellAttention(shell.id, true);
-      const state = useAppStore.getState();
-      const currentShell = state.shells[shell.id];
-      const projectName = state.projects[shell.projectId]?.name ?? "Project";
-      const shellName = currentShell?.name ?? "Shell";
-      const title =
-        notification.title?.trim() || `${projectName} · ${shellName}`;
-      const body =
-        notification.body?.trim() ||
-        `${shellName} in ${projectName} needs attention.`;
-      void sendDesktopNotification({
-        title,
-        body,
-        tag: `sideshell-shell-${shell.id}`,
-      });
+    const markAttention = () => {
+      raiseShellAlert(shell.id, createBellNotification());
     };
     const applyAgentLaunch = (line: string) => {
       const currentShell = useAppStore.getState().shells[shell.id];
@@ -326,18 +303,11 @@ export function TerminalView({ shell, active }: Props) {
 
     // OSC 9 — typical "bell" / notification
     term.parser.registerOscHandler(9, (payload) => {
-      markAttention(parseOsc9Notification(payload));
-      return false;
-    });
-    term.parser.registerOscHandler(777, (payload) => {
-      const notification = parseOsc777Notification(payload);
-      if (notification) {
-        markAttention(notification);
-      }
+      raiseShellAlert(shell.id, parseOsc9Notification(payload));
       return false;
     });
     const onBell = term.onBell(() => {
-      markAttention(createBellNotification());
+      markAttention();
     });
     const onTitleChange = term.onTitleChange((title) => {
       const currentShell = useAppStore.getState().shells[shell.id];
@@ -591,6 +561,7 @@ export function TerminalView({ shell, active }: Props) {
         setShellSize(shell.id, t.cols, t.rows);
       }
     });
+    dismissShellAlert(shell.id);
     if (shell.needsAttention) setShellAttention(shell.id, false);
   }, [active, shell.id, shell.needsAttention, setShellAttention, setShellSize]);
 

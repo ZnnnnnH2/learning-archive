@@ -10,11 +10,13 @@ export interface PtySpawnOptions {
 
 export const DEFAULT_TERMINAL_FONT_FAMILY =
   '"JetBrains Mono", "Cascadia Mono", "Cascadia Code", "Sarasa Mono SC", "Maple Mono NF CN", Menlo, Consolas, monospace';
+export const DEFAULT_ALERT_POPUP_DURATION_SECONDS = 3;
 
 export const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   shellExecutable: "",
   fontFamily: DEFAULT_TERMINAL_FONT_FAMILY,
   extraEnvText: "",
+  alertPopupDurationSeconds: DEFAULT_ALERT_POPUP_DURATION_SECONDS,
 };
 
 export function normalizeTerminalSettings(
@@ -26,6 +28,9 @@ export function normalizeTerminalSettings(
     shellExecutable,
     fontFamily: fontFamily || DEFAULT_TERMINAL_FONT_FAMILY,
     extraEnvText: normalizeLineEndings(input?.extraEnvText ?? "").trim(),
+    alertPopupDurationSeconds: normalizeAlertPopupDurationSeconds(
+      input?.alertPopupDurationSeconds
+    ),
   };
 }
 
@@ -73,4 +78,13 @@ export function buildPtySpawnOptions(
 
 function normalizeLineEndings(value: string): string {
   return value.replace(/\r\n?/g, "\n");
+}
+
+function normalizeAlertPopupDurationSeconds(
+  value: number | null | undefined
+): number {
+  if (!Number.isFinite(value) || value == null || value <= 0) {
+    return DEFAULT_ALERT_POPUP_DURATION_SECONDS;
+  }
+  return Math.max(1, Math.round(value));
 }

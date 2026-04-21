@@ -1,4 +1,6 @@
 import { useEffect } from "react";
+import { primeAlertSound } from "./alertSound";
+import { ShellAlertsOverlay } from "./components/ShellAlertsOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalHost } from "./components/TerminalHost";
 import { useAppStore } from "./store";
@@ -15,6 +17,10 @@ export default function App() {
   const cloneShell = useAppStore((s) => s.cloneShell);
   const removeShell = useAppStore((s) => s.removeShell);
   const setActive = useAppStore((s) => s.setActive);
+
+  useEffect(() => {
+    primeAlertSound();
+  }, []);
 
   useEffect(() => {
     (async () => {
@@ -91,6 +97,7 @@ export default function App() {
     <div className="h-full w-full flex bg-bg-0 text-text-0">
       <Sidebar />
       <TerminalHost />
+      <ShellAlertsOverlay />
     </div>
   );
 }

@@ -43,6 +43,9 @@ function WaitingDot({
 }
 
 export function StatusDot({ status, needsAttention, className }: Props) {
+  if (needsAttention) {
+    return <AttentionIcon className={className} label="needs attention" />;
+  }
   if (status === "running") {
     return (
       <span
@@ -77,9 +80,6 @@ export function StatusDot({ status, needsAttention, className }: Props) {
     );
   }
   // idle
-  if (needsAttention) {
-    return <AttentionIcon className={className} label="needs attention" />;
-  }
   return (
     <span
       className={cn("inline-block h-2 w-2 rounded-full bg-text-2/40", className)}

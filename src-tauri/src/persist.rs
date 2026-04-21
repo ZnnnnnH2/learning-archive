@@ -67,6 +67,8 @@ pub struct TerminalSettingsRecord {
     pub font_family: Option<String>,
     #[serde(default)]
     pub extra_env_text: Option<String>,
+    #[serde(default)]
+    pub alert_popup_duration_seconds: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

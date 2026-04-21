@@ -101,11 +101,6 @@ textarea {
 }
 
 /* Animations */
-@keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
 @keyframes pulse-soft {
   0%,
   100% {
@@ -124,9 +119,6 @@ textarea {
     transform: translateX(0);
     opacity: 1;
   }
-}
-.anim-spin {
-  animation: spin 1.1s linear infinite;
 }
 .anim-pulse {
   animation: pulse-soft 1.8s ease-in-out infinite;

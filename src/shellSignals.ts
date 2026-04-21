@@ -27,7 +27,7 @@ const TITLE_IDLE_PATTERNS = [
 ];
 
 export interface ParsedTerminalNotification {
-  kind: "bell" | "osc9" | "osc777";
+  kind: "bell" | "osc9";
   title?: string;
   body?: string;
 }
@@ -46,22 +46,8 @@ export function parseOsc9Notification(
 ): ParsedTerminalNotification {
   return {
     kind: "osc9",
+    title: undefined,
     body: normalizeNotificationText(payload),
-  };
-}
-
-export function parseOsc777Notification(
-  payload: string
-): ParsedTerminalNotification | null {
-  const [command, rawTitle, ...bodyParts] = payload.split(";");
-  if ((command ?? "").trim().toLowerCase() !== "notify") {
-    return null;
-  }
-
-  return {
-    kind: "osc777",
-    title: normalizeNotificationText(rawTitle),
-    body: normalizeNotificationText(bodyParts.join(";")),
   };
 }
 

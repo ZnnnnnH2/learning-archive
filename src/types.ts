@@ -98,12 +98,14 @@ export interface TerminalSettings {
   shellExecutable: string;
   fontFamily: string;
   extraEnvText: string;
+  alertPopupDurationSeconds: number;
 }
 
 export interface PersistedTerminalSettings {
   shellExecutable?: string | null;
   fontFamily?: string | null;
   extraEnvText?: string | null;
+  alertPopupDurationSeconds?: number | null;
 }
 
 export interface PersistedState {

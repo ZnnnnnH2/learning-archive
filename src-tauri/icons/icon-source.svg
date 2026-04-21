@@ -1,0 +1,39 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="128" y1="112" x2="896" y2="912" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#121A2A"/>
+      <stop offset="0.56" stop-color="#0B1019"/>
+      <stop offset="1" stop-color="#080B11"/>
+    </linearGradient>
+    <linearGradient id="tileStroke" x1="132" y1="124" x2="878" y2="882" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#32415D"/>
+      <stop offset="1" stop-color="#151C2C"/>
+    </linearGradient>
+    <linearGradient id="rail" x1="194" y1="160" x2="346" y2="822" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#161F31"/>
+      <stop offset="1" stop-color="#0D121C"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="306" y1="212" x2="802" y2="744" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#69E0FF"/>
+      <stop offset="0.5" stop-color="#4AA8FF"/>
+      <stop offset="1" stop-color="#7C7CFF"/>
+    </linearGradient>
+    <linearGradient id="glyph" x1="448" y1="312" x2="760" y2="688" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F3FBFF"/>
+      <stop offset="0.58" stop-color="#8AD9FF"/>
+      <stop offset="1" stop-color="#A6A9FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="72" y="72" width="880" height="880" rx="224" fill="url(#tile)"/>
+  <rect x="84" y="84" width="856" height="856" rx="212" stroke="url(#tileStroke)" stroke-width="24"/>
+  <rect x="136" y="136" width="236" height="752" rx="124" fill="url(#rail)"/>
+
+  <rect x="182" y="252" width="146" height="72" rx="36" fill="#64DFFF"/>
+  <rect x="182" y="382" width="118" height="64" rx="32" fill="#7C7CFF"/>
+
+  <rect x="388" y="176" width="36" height="672" rx="18" fill="url(#accent)"/>
+
+  <path d="M504 346L670 512L504 678" stroke="url(#accent)" stroke-width="92" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M704 678H804" stroke="url(#glyph)" stroke-width="92" stroke-linecap="round"/>
+</svg>

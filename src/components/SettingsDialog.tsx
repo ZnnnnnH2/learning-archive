@@ -3,6 +3,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Settings, X } from "lucide-react";
 import { useAppStore } from "../store";
 import {
+  DEFAULT_ALERT_POPUP_DURATION_SECONDS,
   DEFAULT_TERMINAL_FONT_FAMILY,
   normalizeTerminalSettings,
   parseTerminalEnvText,
@@ -113,6 +114,26 @@ export function SettingsDialog({ open, onOpenChange }: Props) {
                 placeholder={"TERM_PROGRAM=SideShell\nMY_AGENT_MODE=1"}
                 spellCheck={false}
                 className="min-h-32 w-full resize-y rounded-lg border border-border bg-bg-2 px-3 py-2 font-mono text-[12px] leading-5 text-text-0 outline-none transition placeholder:text-text-2 focus:border-accent/60"
+              />
+            </Field>
+
+            <Field
+              label="Alert popup duration"
+              hint="How long BEL / OSC 9 alert toasts stay visible. Defaults to 3 seconds."
+            >
+              <input
+                type="number"
+                min={1}
+                step={1}
+                value={draft.alertPopupDurationSeconds}
+                onChange={(e) =>
+                  updateDraft(
+                    "alertPopupDurationSeconds",
+                    Number.parseInt(e.target.value, 10) || 0
+                  )
+                }
+                placeholder={String(DEFAULT_ALERT_POPUP_DURATION_SECONDS)}
+                className="w-full rounded-lg border border-border bg-bg-2 px-3 py-2 text-[12.5px] text-text-0 outline-none transition placeholder:text-text-2 focus:border-accent/60"
               />
             </Field>
 

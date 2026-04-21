@@ -29,7 +29,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 
 - 自动识别常见 agent 启动命令并生成更可读的会话名称。
 - 优先使用终端发出的 title 更新 shell 名称，缺失时再回退到 agent 标签和首条消息摘要。
-- 解析 `OSC 133`、终端标题、`BEL`、`OSC 9`、`OSC 777 notify` 等信号，给出 `running`、`waiting`、`error`、`exited` 和 attention 状态。
+- 解析 `OSC 133`、终端标题、`BEL`、`OSC 9` 等信号，给出 `running`、`waiting`、`error`、`exited` 和 attention 状态。
 - cwd 变化会同步到侧边栏，方便快速判断每个 shell 当前所在目录。
 
 ### Shell Integration
@@ -48,6 +48,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 - 可配置默认 shell 可执行文件。
 - 可调整终端字体。
 - 可为新启动的 shell 注入额外环境变量。
+- 可配置 `BEL` / `OSC 9` 告警弹窗停留时长，默认 3 秒。
 
 ## 适合的场景
 
