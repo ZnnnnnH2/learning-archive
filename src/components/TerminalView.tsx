@@ -74,6 +74,7 @@ export function TerminalView({ shell, active }: Props) {
   const attachCompleteRef = useRef(false);
   const pendingDataRef = useRef<PtyDataEvent[]>([]);
   const pendingResumeCommandRef = useRef<string | null>(null);
+  const pendingCommandKindRef = useRef<"restore" | "startup" | null>(null);
   const promptReadyRef = useRef(false);
   const resumeSentRef = useRef(false);
   const resumeFallbackTimerRef = useRef<number | null>(null);
@@ -95,6 +96,9 @@ export function TerminalView({ shell, active }: Props) {
   );
   const clearShellRestorePending = useAppStore(
     (s) => s.clearShellRestorePending
+  );
+  const clearShellStartupCommand = useAppStore(
+    (s) => s.clearShellStartupCommand
   );
   const setShellTerminalTitle = useAppStore((s) => s.setShellTerminalTitle);
   const setShellFirstMessagePreview = useAppStore(
@@ -121,17 +125,26 @@ export function TerminalView({ shell, active }: Props) {
   const updatePendingResumeCommand = (
     currentShell: Shell | null | undefined
   ): string | null => {
-    const command =
-      currentShell?.restorePending && !currentShell.restoreResolvePending
-        ? buildAgentRestoreCommand({
-            kind: currentShell.agentKind,
-            restoreCommandPrefix: currentShell.restoreCommandPrefix,
-            restoreCommandSuffix: currentShell.restoreCommandSuffix,
-            restoreFallbackCommand: currentShell.restoreFallbackCommand,
-            restoreTarget: currentShell.restoreTarget,
-          })
-        : null;
+    let command: string | null = null;
+    let kind: "restore" | "startup" | null = null;
+    if (currentShell?.startupCommand) {
+      command = currentShell.startupCommand;
+      kind = "startup";
+    } else if (
+      currentShell?.restorePending &&
+      !currentShell.restoreResolvePending
+    ) {
+      command = buildAgentRestoreCommand({
+        kind: currentShell.agentKind,
+        restoreCommandPrefix: currentShell.restoreCommandPrefix,
+        restoreCommandSuffix: currentShell.restoreCommandSuffix,
+        restoreFallbackCommand: currentShell.restoreFallbackCommand,
+        restoreTarget: currentShell.restoreTarget,
+      });
+      kind = command ? "restore" : null;
+    }
     pendingResumeCommandRef.current = command;
+    pendingCommandKindRef.current = kind;
     if (!command) {
       clearResumeFallbackTimer();
     }
@@ -146,14 +159,21 @@ export function TerminalView({ shell, active }: Props) {
       return;
     }
 
+    const commandKind = pendingCommandKindRef.current;
     resumeSentRef.current = true;
     pendingResumeCommandRef.current = null;
+    pendingCommandKindRef.current = null;
     clearResumeFallbackTimer();
-    clearShellRestorePending(shell.id);
+    if (commandKind === "startup") {
+      clearShellStartupCommand(shell.id);
+    } else {
+      clearShellRestorePending(shell.id);
+    }
     setShellStatus(shell.id, "running");
     ptyWrite(sid, stringToBase64(`${command}\r`)).catch((error) => {
       resumeSentRef.current = false;
       pendingResumeCommandRef.current = command;
+      pendingCommandKindRef.current = commandKind;
       setShellStatus(shell.id, "error");
       console.error("resume command failed", error);
     });
@@ -220,6 +240,7 @@ export function TerminalView({ shell, active }: Props) {
     attachCompleteRef.current = false;
     pendingDataRef.current = [];
     pendingResumeCommandRef.current = null;
+    pendingCommandKindRef.current = null;
     promptReadyRef.current = false;
     resumeSentRef.current = false;
     clearResumeFallbackTimer();
@@ -500,6 +521,7 @@ export function TerminalView({ shell, active }: Props) {
     shell.restoreCommandPrefix,
     shell.restoreCommandSuffix,
     shell.restoreFallbackCommand,
+    shell.startupCommand,
     shell.restoreTarget?.kind,
     shell.restoreTarget?.value,
   ]);

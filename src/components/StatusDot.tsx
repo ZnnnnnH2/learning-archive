@@ -50,7 +50,7 @@ export function StatusDot({ status, needsAttention, className }: Props) {
     return (
       <span
         className={cn(
-          "inline-block h-2.5 w-2.5 rounded-full border-2 border-good border-t-transparent anim-spin",
+          "inline-block h-2.5 w-2.5 rounded-full border border-text-2/60 bg-text-2/20 anim-pulse",
           className
         )}
         aria-label="running"

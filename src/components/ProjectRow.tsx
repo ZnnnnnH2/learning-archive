@@ -44,19 +44,16 @@ export function ProjectRow({ projectId }: Props) {
   const aggStatus = (() => {
     let hasError = false;
     let hasWaiting = false;
-    let hasRunning = false;
     let hasAttention = false;
     for (const sid of shellIds) {
       const sh = shells[sid];
       if (!sh) continue;
       if (sh.status === "error") hasError = true;
       else if (sh.status === "waiting") hasWaiting = true;
-      else if (sh.status === "running") hasRunning = true;
       if (sh.needsAttention) hasAttention = true;
     }
     if (hasError) return "error" as const;
     if (hasWaiting) return "waiting" as const;
-    if (hasRunning) return "running" as const;
     if (hasAttention) return "idle" as const;
     return "idle" as const;
   })();

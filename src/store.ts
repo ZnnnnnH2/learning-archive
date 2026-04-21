@@ -1,7 +1,9 @@
 import { create } from "zustand";
 import {
+  buildDefaultAgentNewSessionCommand,
   buildAgentShellName,
   buildDefaultShellName,
+  sanitizeAgentRestoreCommandPrefix,
   type DetectedAgentLaunch,
   normalizeShellNameMode,
 } from "./autoName";
@@ -11,6 +13,7 @@ import {
 } from "./terminalConfig";
 import type {
   AgentKind,
+  LazyShellStartMode,
   PersistedRestoreTarget,
   PersistedState,
   Project,
@@ -58,6 +61,8 @@ interface AppState {
     expectedLaunchStartedAt?: number | null
   ) => void;
   clearShellRestorePending: (id: string) => void;
+  clearShellStartupCommand: (id: string) => void;
+  startLazyShell: (id: string, mode: LazyShellStartMode) => void;
   setShellTerminalTitle: (id: string, title: string) => void;
   setShellFirstMessagePreview: (id: string, message: string) => void;
   useAutoShellName: (id: string) => void;
@@ -181,6 +186,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       restoreCommandPrefix: null,
       restoreCommandSuffix: null,
       restoreFallbackCommand: null,
+      newSessionCommand: null,
+      startupCommand: null,
       restoreTarget: null,
       restorePending: false,
       restoreResolvePending: false,
@@ -274,8 +281,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           agentKind: launch.kind,
           agentLabel: nextLabel,
           restoreCapability: launch.restoreCapability,
-          restoreCommandPrefix: normalizeNullableString(
-            launch.restoreCommandPrefix
+          restoreCommandPrefix: sanitizeAgentRestoreCommandPrefix(
+            launch.kind,
+            normalizeNullableString(launch.restoreCommandPrefix)
           ),
           restoreCommandSuffix: normalizeNullableString(
             launch.restoreCommandSuffix
@@ -283,6 +291,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           restoreFallbackCommand: normalizeNullableString(
             launch.restoreFallbackCommand
           ),
+          newSessionCommand:
+            normalizeNullableString(launch.newSessionCommand) ??
+            buildDefaultAgentNewSessionCommand(launch.kind),
+          startupCommand: null,
           restoreTarget,
           restorePending: false,
           restoreResolvePending: resolvePending,
@@ -371,6 +383,112 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+  },
+
+  clearShellStartupCommand: (id) => {
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh || !sh.startupCommand) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, startupCommand: null },
+        },
+      };
+    });
+  },
+
+  startLazyShell: (id, mode) => {
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh) return {};
+
+      const hasRestorePath = Boolean(
+        sh.restorePending ||
+          sh.restoreResolvePending ||
+          sh.restoreTarget ||
+          sh.restoreFallbackCommand
+      );
+      const nextShellBase: Shell = {
+        ...sh,
+        lazyStart: false,
+        startupCommand: null,
+      };
+
+      let nextShell = nextShellBase;
+      if (mode === "restore" && hasRestorePath) {
+        nextShell = {
+          ...nextShellBase,
+          restorePending: Boolean(
+            sh.restorePending ||
+              sh.restoreResolvePending ||
+              sh.restoreTarget ||
+              sh.restoreFallbackCommand
+          ),
+        };
+      } else if (mode === "new_agent_session") {
+        nextShell = {
+          ...nextShellBase,
+          restoreCapability: null,
+          restoreCommandPrefix: null,
+          restoreCommandSuffix: null,
+          restoreFallbackCommand: null,
+          restoreTarget: null,
+          restorePending: false,
+          restoreResolvePending: false,
+          restoreResolveStrategy: null,
+          restoreLaunchStartedAt: null,
+          restoreLaunchCwd: null,
+          firstMessagePreview: null,
+          terminalTitle: null,
+          status: "idle",
+          startupCommand:
+            sh.newSessionCommand ?? buildDefaultAgentNewSessionCommand(sh.agentKind),
+        };
+      } else {
+        nextShell = {
+          ...nextShellBase,
+          agentKind: null,
+          agentLabel: null,
+          restoreCapability: null,
+          restoreCommandPrefix: null,
+          restoreCommandSuffix: null,
+          restoreFallbackCommand: null,
+          newSessionCommand: null,
+          restoreTarget: null,
+          restorePending: false,
+          restoreResolvePending: false,
+          restoreResolveStrategy: null,
+          restoreLaunchStartedAt: null,
+          restoreLaunchCwd: null,
+          firstMessagePreview: null,
+          terminalTitle: null,
+          status: "idle",
+        };
+      }
+
+      if (
+        nextShell === sh ||
+        (sh.lazyStart === nextShell.lazyStart &&
+          areShellRestoreFieldsEqual(sh, nextShell) &&
+          sh.startupCommand === nextShell.startupCommand &&
+          areShellNameFieldsEqual(sh, nextShell) &&
+          sh.status === nextShell.status)
+      ) {
+        return {
+          activeShellId: id,
+        };
+      }
+
+      return {
+        activeShellId: id,
+        shells: {
+          ...s.shells,
+          [id]: nextShell,
+        },
+      };
+    });
+    get().persist();
   },
 
   setShellTerminalTitle: (id, title) => {
@@ -523,21 +641,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setActive: (id) => {
-    set((s) => {
+    set(() => {
       if (!id) {
         return { activeShellId: null };
       }
-      const sh = s.shells[id];
-      if (!sh || !sh.lazyStart) {
-        return { activeShellId: id };
-      }
-      return {
-        activeShellId: id,
-        shells: {
-          ...s.shells,
-          [id]: { ...sh, lazyStart: false },
-        },
-      };
+      return { activeShellId: id };
     });
     if (id) {
       const sh = get().shells[id];
@@ -596,6 +704,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         const restoreFallbackCommand =
           normalizeNullableString(s.restoreFallbackCommand) ??
           normalizeNullableString(s.resumeCommand);
+        const newSessionCommand =
+          normalizeNullableString(s.newSessionCommand) ??
+          buildDefaultAgentNewSessionCommand(agentKind);
+        const restoreCommandPrefix = sanitizeAgentRestoreCommandPrefix(
+          agentKind,
+          normalizeNullableString(s.restoreCommandPrefix)
+        );
         const restoreResolveStrategy = normalizeRestoreResolveStrategy(
           s.restoreResolveStrategy
         );
@@ -618,13 +733,13 @@ export const useAppStore = create<AppState>((set, get) => ({
             restoreCapability:
               normalizeRestoreCapability(s.restoreCapability) ??
               inferRestoreCapability(agentKind, restoreTarget, restoreFallbackCommand),
-            restoreCommandPrefix: normalizeNullableString(
-              s.restoreCommandPrefix
-            ),
+            restoreCommandPrefix,
             restoreCommandSuffix: normalizeNullableString(
               s.restoreCommandSuffix
             ),
             restoreFallbackCommand,
+            newSessionCommand,
+            startupCommand: null,
             restoreTarget,
             restorePending: Boolean(restoreTarget || restoreFallbackCommand),
             restoreResolvePending,
@@ -702,6 +817,7 @@ export const useAppStore = create<AppState>((set, get) => ({
               restoreCommandPrefix: sh.restoreCommandPrefix,
               restoreCommandSuffix: sh.restoreCommandSuffix,
               restoreFallbackCommand: sh.restoreFallbackCommand,
+              newSessionCommand: sh.newSessionCommand,
               restoreTarget: sh.restoreTarget,
               restoreResolvePending: sh.restoreResolvePending,
               restoreResolveStrategy: sh.restoreResolveStrategy,
@@ -780,6 +896,7 @@ function areShellRestoreFieldsEqual(a: Shell, b: Shell): boolean {
     a.restoreCommandPrefix === b.restoreCommandPrefix &&
     a.restoreCommandSuffix === b.restoreCommandSuffix &&
     a.restoreFallbackCommand === b.restoreFallbackCommand &&
+    a.newSessionCommand === b.newSessionCommand &&
     a.restorePending === b.restorePending &&
     a.restoreResolvePending === b.restoreResolvePending &&
     a.restoreResolveStrategy === b.restoreResolveStrategy &&

@@ -14,6 +14,7 @@ export type RestoreCapability =
   | "unsupported";
 export type RestoreTargetKind = "thread_id" | "session_id";
 export type RestoreResolveStrategy = "codex_new_thread" | "codex_latest_cwd";
+export type LazyShellStartMode = "restore" | "new_agent_session" | "terminal";
 
 export interface RestoreTarget {
   kind: RestoreTargetKind;
@@ -38,6 +39,8 @@ export interface Shell {
   restoreCommandPrefix: string | null;
   restoreCommandSuffix: string | null;
   restoreFallbackCommand: string | null;
+  newSessionCommand: string | null;
+  startupCommand: string | null;
   restoreTarget: RestoreTarget | null;
   restorePending: boolean;
   restoreResolvePending: boolean;
@@ -75,6 +78,7 @@ export interface PersistedShell {
   restoreCommandPrefix?: string | null;
   restoreCommandSuffix?: string | null;
   restoreFallbackCommand?: string | null;
+  newSessionCommand?: string | null;
   restoreTarget?: PersistedRestoreTarget | null;
   restoreResolvePending?: boolean | null;
   restoreResolveStrategy?: string | null;

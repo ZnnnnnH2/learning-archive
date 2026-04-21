@@ -30,6 +30,8 @@ pub struct ShellRecord {
     #[serde(default)]
     pub restore_fallback_command: Option<String>,
     #[serde(default)]
+    pub new_session_command: Option<String>,
+    #[serde(default)]
     pub restore_target: Option<RestoreTargetRecord>,
     #[serde(default)]
     pub restore_resolve_pending: Option<bool>,

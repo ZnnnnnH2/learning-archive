@@ -21,6 +21,7 @@ export interface DetectedAgentLaunch {
   restoreCommandPrefix: string | null;
   restoreCommandSuffix: string | null;
   restoreFallbackCommand: string | null;
+  newSessionCommand: string | null;
   explicitRestoreTarget: RestoreTarget | null;
   resolveStrategy: RestoreResolveStrategy | null;
   launchCwd: string | null;
@@ -48,6 +49,7 @@ type CodexLaunchPlan = {
   restoreCommandPrefix: string | null;
   restoreCommandSuffix: string | null;
   restoreFallbackCommand: string | null;
+  newSessionCommand: string | null;
   explicitRestoreTarget: RestoreTarget | null;
   resolveStrategy: RestoreResolveStrategy | null;
   launchCwd: string | null;
@@ -193,6 +195,13 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
   ],
 ]);
 
+const DEFAULT_AGENT_NEW_SESSION_COMMANDS: Record<AgentKind, string> = {
+  codex: "codex",
+  claude: "claude",
+  gemini: "gemini",
+  opencode: "opencode",
+};
+
 const WRAPPER_SEQUENCES = [
   ["npx"],
   ["pnpx"],
@@ -281,16 +290,35 @@ export function buildAgentRestoreCommand(options: {
     restoreTarget,
   } = options;
   if (kind === "codex" && restoreTarget && restoreCommandPrefix) {
+    const sanitizedPrefix = sanitizeCodexRestorePrefix(restoreCommandPrefix);
     const target = restoreTarget.value.trim();
-    if (!target) return restoreFallbackCommand;
+    if (!target || !sanitizedPrefix) return restoreFallbackCommand;
     const targetSegment = target.startsWith("-") ? `-- ${target}` : target;
     return joinCommandParts([
-      restoreCommandPrefix,
+      sanitizedPrefix,
       targetSegment,
       restoreCommandSuffix,
     ]);
   }
   return restoreFallbackCommand;
+}
+
+export function buildDefaultAgentNewSessionCommand(
+  kind: AgentKind | null
+): string | null {
+  return kind ? DEFAULT_AGENT_NEW_SESSION_COMMANDS[kind] : null;
+}
+
+export function sanitizeAgentRestoreCommandPrefix(
+  kind: AgentKind | null,
+  prefix: string | null
+): string | null {
+  const normalized = prefix?.trim() ?? "";
+  if (!normalized) return null;
+  if (kind === "codex") {
+    return sanitizeCodexRestorePrefix(normalized);
+  }
+  return normalized;
 }
 
 export function buildAgentShellName(
@@ -413,6 +441,51 @@ function commandAfterExecutionFlagIndex(tokens: CommandToken[]): number | null {
   return null;
 }
 
+function firstCodexPositionalIndex(
+  tokens: CommandToken[],
+  start: number
+): number | null {
+  let pendingValueOption: string | null = null;
+  let positional = false;
+
+  for (let index = start; index < tokens.length; index += 1) {
+    const token = tokens[index];
+    const value = token?.value;
+    if (!value) continue;
+
+    if (positional) return index;
+
+    if (pendingValueOption) {
+      if (isSuspiciousCodexOptionValue(pendingValueOption, value)) {
+        pendingValueOption = null;
+        return index;
+      }
+      pendingValueOption = null;
+      continue;
+    }
+
+    if (value === "--") {
+      positional = true;
+      continue;
+    }
+
+    const option = codexOptionKey(value);
+    if (option) {
+      if (
+        CODEX_VALUE_OPTIONS.has(option) &&
+        !hasInlineCodexOptionValue(value, option)
+      ) {
+        pendingValueOption = option;
+      }
+      continue;
+    }
+
+    return index;
+  }
+
+  return null;
+}
+
 function buildDetectedAgentLaunchFromIndex(
   tokens: CommandToken[],
   targetIndex: number | null,
@@ -445,6 +518,10 @@ function buildDetectedGenericAgentLaunch(
     ...launchArgs,
     ...launch.resumeArgs,
   ]);
+  const newSessionCommand = joinCommandTokens([
+    ...commandPrefix,
+    ...launchArgs,
+  ]);
 
   return {
     kind: launch.kind,
@@ -453,6 +530,7 @@ function buildDetectedGenericAgentLaunch(
     restoreCommandPrefix: null,
     restoreCommandSuffix: null,
     restoreFallbackCommand,
+    newSessionCommand,
     explicitRestoreTarget: null,
     resolveStrategy: null,
     launchCwd: null,
@@ -486,6 +564,10 @@ function buildDetectedCodexLaunch(
       commandPrefixTokens,
       plan.restoreFallbackCommand
     ),
+    newSessionCommand: prefixCodexCommand(
+      commandPrefixTokens,
+      plan.newSessionCommand
+    ),
     explicitRestoreTarget: plan.explicitRestoreTarget,
     resolveStrategy: plan.resolveStrategy,
     launchCwd: plan.launchCwd,
@@ -496,7 +578,7 @@ function analyzeCodexLaunch(
   launchArgs: CommandToken[],
   currentCwd: string | null
 ): CodexLaunchPlan | null {
-  const firstPositional = firstNonFlagTokenIndex(launchArgs, 0);
+  const firstPositional = firstCodexPositionalIndex(launchArgs, 0);
   if (firstPositional == null) {
     return buildCodexNewThreadPlan(
       collectCodexOptionsUntilPositional(launchArgs),
@@ -551,6 +633,7 @@ function buildCodexNewThreadPlan(
       "resume",
       "--last",
     ]),
+    newSessionCommand: joinCommandTokens(globalOptions),
     explicitRestoreTarget: null,
     resolveStrategy: "codex_new_thread",
     launchCwd,
@@ -574,6 +657,10 @@ function buildCodexResumePlan(
         analysis.explicitRestoreTarget.value,
         ...analysis.runtimeOptions,
       ]),
+      newSessionCommand: joinCommandTokens([
+        ...globalOptions,
+        ...analysis.runtimeOptions,
+      ]),
       explicitRestoreTarget: analysis.explicitRestoreTarget,
       resolveStrategy: null,
       launchCwd,
@@ -592,6 +679,10 @@ function buildCodexResumePlan(
       ...globalOptions,
       "resume",
       "--last",
+      ...analysis.runtimeOptions,
+    ]),
+    newSessionCommand: joinCommandTokens([
+      ...globalOptions,
       ...analysis.runtimeOptions,
     ]),
     explicitRestoreTarget: null,
@@ -616,6 +707,7 @@ function buildCodexForkPlan(
       "--last",
       ...runtimeOptions,
     ]),
+    newSessionCommand: joinCommandTokens([...globalOptions, ...runtimeOptions]),
     explicitRestoreTarget: null,
     resolveStrategy: "codex_new_thread",
     launchCwd,
@@ -636,6 +728,10 @@ function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
 
   for (const token of subcommandArgs) {
     if (pendingValueOption) {
+      if (isSuspiciousCodexOptionValue(pendingValueOption, token.value)) {
+        pendingValueOption = null;
+        break;
+      }
       if (!CODEX_DROPPED_OPTIONS.has(pendingValueOption)) {
         runtimeOptions.push(token.raw);
       }
@@ -708,28 +804,28 @@ function normalizeCommandToken(token: string): string {
 
 function collectCodexOptionsUntilPositional(tokens: CommandToken[]): string[] {
   const out: string[] = [];
-  let pendingValueOption: string | null = null;
-
-  for (const token of tokens) {
-    if (pendingValueOption) {
-      if (!CODEX_DROPPED_OPTIONS.has(pendingValueOption)) {
-        out.push(token.raw);
-      }
-      pendingValueOption = null;
-      continue;
-    }
-
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index];
     const option = codexOptionKey(token.value);
-    if (!option) {
-      break;
+    if (!option) break;
+
+    if (
+      CODEX_VALUE_OPTIONS.has(option) &&
+      !hasInlineCodexOptionValue(token.value, option)
+    ) {
+      const nextToken = tokens[index + 1];
+      if (!nextToken || isSuspiciousCodexOptionValue(option, nextToken.value)) {
+        break;
+      }
+      if (!CODEX_DROPPED_OPTIONS.has(option)) {
+        out.push(token.raw, nextToken.raw);
+      }
+      index += 1;
+      continue;
     }
 
     if (!CODEX_DROPPED_OPTIONS.has(option)) {
       out.push(token.raw);
-    }
-
-    if (CODEX_VALUE_OPTIONS.has(option) && !hasInlineCodexOptionValue(token.value, option)) {
-      pendingValueOption = option;
     }
   }
 
@@ -744,6 +840,10 @@ function collectCodexForkRuntimeOptions(tokens: CommandToken[]): string[] {
 
   for (const token of tokens) {
     if (pendingValueOption) {
+      if (isSuspiciousCodexOptionValue(pendingValueOption, token.value)) {
+        pendingValueOption = null;
+        break;
+      }
       if (!CODEX_DROPPED_OPTIONS.has(pendingValueOption)) {
         out.push(token.raw);
       }
@@ -767,11 +867,14 @@ function collectCodexForkRuntimeOptions(tokens: CommandToken[]): string[] {
       if (CODEX_FORK_SELECTION_OPTIONS.has(option)) {
         continue;
       }
+      if (
+        CODEX_VALUE_OPTIONS.has(option) &&
+        !hasInlineCodexOptionValue(token.value, option)
+      ) {
+        pendingValueOption = option;
+      }
       if (!CODEX_DROPPED_OPTIONS.has(option)) {
         out.push(token.raw);
-      }
-      if (CODEX_VALUE_OPTIONS.has(option) && !hasInlineCodexOptionValue(token.value, option)) {
-        pendingValueOption = option;
       }
       continue;
     }
@@ -804,6 +907,13 @@ function codexOptionKey(token: string): string | null {
   }
 
   return token;
+}
+
+function isSuspiciousCodexOptionValue(option: string, value: string): boolean {
+  if (!CODEX_VALUE_OPTIONS.has(option)) {
+    return false;
+  }
+  return CODEX_SUBCOMMANDS.has(normalizeCommandToken(value));
 }
 
 function hasInlineCodexOptionValue(token: string, option: string): boolean {
@@ -926,6 +1036,34 @@ function prefixCodexCommand(
 function joinCommandTokens(tokens: string[]): string | null {
   const joined = tokens.map((token) => token.trim()).filter(Boolean).join(" ");
   return joined || null;
+}
+
+function sanitizeCodexRestorePrefix(prefix: string): string | null {
+  const tokens = tokenizeCommandTokens(prefix);
+  if (tokens.length === 0) return null;
+
+  const codexIndex = tokens.findIndex(
+    (token) => normalizeCommandToken(token.value) === "codex"
+  );
+  if (codexIndex < 0) {
+    return prefix.trim() || null;
+  }
+
+  const subcommandIndex = firstCodexPositionalIndex(tokens, codexIndex + 1);
+  const subcommand =
+    subcommandIndex == null
+      ? null
+      : normalizeCommandToken(tokens[subcommandIndex]?.value ?? "");
+
+  if (subcommand === "resume") {
+    return joinCommandTokens(tokens.map((token) => token.raw));
+  }
+
+  const repaired = joinCommandTokens([
+    ...tokens.slice(0, codexIndex + 1).map((token) => token.raw),
+    "resume",
+  ]);
+  return repaired;
 }
 
 function joinCommandParts(parts: Array<string | null | undefined>): string | null {
