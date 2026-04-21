@@ -1,5 +1,6 @@
 import { useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
+import { message } from "@tauri-apps/plugin-dialog";
 import {
   ChevronRight,
   Folder,
@@ -8,8 +9,14 @@ import {
   X,
   Pencil,
   Copy,
+  Code2,
 } from "lucide-react";
 import { useAppStore } from "../store";
+import {
+  openProjectInEditor,
+  openProjectInFileManager,
+  type ExternalEditor,
+} from "../ipc";
 import { ShellRow } from "./ShellRow";
 import { StatusDot } from "./StatusDot";
 import { cn } from "../utils";
@@ -38,22 +45,22 @@ export function ProjectRow({ projectId }: Props) {
     let hasError = false;
     let hasWaiting = false;
     let hasRunning = false;
-    let hasUnread = false;
+    let hasAttention = false;
     for (const sid of shellIds) {
       const sh = shells[sid];
       if (!sh) continue;
       if (sh.status === "error") hasError = true;
       else if (sh.status === "waiting") hasWaiting = true;
       else if (sh.status === "running") hasRunning = true;
-      if (sh.hasUnread) hasUnread = true;
+      if (sh.needsAttention) hasAttention = true;
     }
     if (hasError) return "error" as const;
     if (hasWaiting) return "waiting" as const;
     if (hasRunning) return "running" as const;
-    if (hasUnread) return "idle" as const;
+    if (hasAttention) return "idle" as const;
     return "idle" as const;
   })();
-  const aggUnread = shellIds.some((sid) => shells[sid]?.hasUnread);
+  const aggAttention = shellIds.some((sid) => shells[sid]?.needsAttention);
 
   const isAnyActive = shellIds.includes(activeShellId ?? "");
 
@@ -61,6 +68,30 @@ export function ProjectRow({ projectId }: Props) {
     const name = draftName.trim();
     if (name && name !== project.name) renameProject(project.id, name);
     setEditing(false);
+  };
+
+  const handleOpenInEditor = async (editor: ExternalEditor) => {
+    try {
+      await openProjectInEditor(editor, project.path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await message(detail, {
+        title: "Failed to open project",
+        kind: "error",
+      });
+    }
+  };
+
+  const handleOpenInExplorer = async () => {
+    try {
+      await openProjectInFileManager(project.path);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      await message(detail, {
+        title: "Failed to open project folder",
+        kind: "error",
+      });
+    }
   };
 
   const onClickProject = () => {
@@ -129,7 +160,10 @@ export function ProjectRow({ projectId }: Props) {
                 {project.name}
               </span>
             )}
-            <StatusDot status={aggStatus} hasUnread={aggUnread} />
+            <StatusDot
+              status={aggStatus}
+              needsAttention={aggAttention}
+            />
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -174,6 +208,36 @@ export function ProjectRow({ projectId }: Props) {
           >
             <Copy size={13} /> Copy path
           </ContextMenu.Item>
+          <ContextMenu.Sub>
+            <ContextMenu.SubTrigger className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2">
+              <Code2 size={13} /> Open in
+              <span className="ml-auto text-text-2">
+                <ChevronRight size={13} />
+              </span>
+            </ContextMenu.SubTrigger>
+            <ContextMenu.Portal>
+              <ContextMenu.SubContent className="z-50 min-w-[160px] rounded-md bg-bg-2 border border-border shadow-xl p-1 text-[12.5px] text-text-0">
+                <ContextMenu.Item
+                  className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default"
+                  onSelect={() => void handleOpenInEditor("vscode")}
+                >
+                  VS Code
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default"
+                  onSelect={() => void handleOpenInEditor("zed")}
+                >
+                  Zed
+                </ContextMenu.Item>
+                <ContextMenu.Item
+                  className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default"
+                  onSelect={() => void handleOpenInExplorer()}
+                >
+                  File Explorer
+                </ContextMenu.Item>
+              </ContextMenu.SubContent>
+            </ContextMenu.Portal>
+          </ContextMenu.Sub>
           <ContextMenu.Separator className="h-px bg-border my-1" />
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bad/20 text-bad outline-none cursor-default flex items-center gap-2"

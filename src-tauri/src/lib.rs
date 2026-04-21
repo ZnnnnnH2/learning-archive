@@ -1,6 +1,8 @@
+mod agent_restore;
 mod commands;
 mod persist;
 mod pty;
+mod shell_integration;
 
 use pty::PtyManager;
 use std::sync::Arc;
@@ -29,6 +31,9 @@ pub fn run() {
             commands::load_state,
             commands::save_state,
             commands::path_exists,
+            commands::resolve_agent_restore_target,
+            commands::open_project_in_editor,
+            commands::open_project_in_file_manager,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

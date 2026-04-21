@@ -4,11 +4,45 @@ import type { ShellStatus } from "../types";
 
 interface Props {
   status: ShellStatus;
-  hasUnread?: boolean;
+  needsAttention?: boolean;
   className?: string;
 }
 
-export function StatusDot({ status, hasUnread, className }: Props) {
+function AttentionIcon({
+  className,
+  label,
+}: {
+  className?: string;
+  label: string;
+}) {
+  return (
+    <BellRing
+      size={12}
+      className={cn("shrink-0 text-warn anim-pulse", className)}
+      aria-label={label}
+    />
+  );
+}
+
+function WaitingDot({
+  className,
+  label,
+}: {
+  className?: string;
+  label: string;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-block h-2.5 w-2.5 rounded-full border border-warn bg-warn/25 anim-pulse",
+        className
+      )}
+      aria-label={label}
+    />
+  );
+}
+
+export function StatusDot({ status, needsAttention, className }: Props) {
   if (status === "running") {
     return (
       <span
@@ -21,13 +55,7 @@ export function StatusDot({ status, hasUnread, className }: Props) {
     );
   }
   if (status === "waiting") {
-    return (
-      <BellRing
-        size={12}
-        className={cn("shrink-0 text-warn anim-pulse", className)}
-        aria-label="waiting for input"
-      />
-    );
+    return <WaitingDot className={className} label="waiting for input" />;
   }
   if (status === "error") {
     return (
@@ -49,14 +77,13 @@ export function StatusDot({ status, hasUnread, className }: Props) {
     );
   }
   // idle
+  if (needsAttention) {
+    return <AttentionIcon className={className} label="needs attention" />;
+  }
   return (
     <span
-      className={cn(
-        "inline-block h-2 w-2 rounded-full",
-        hasUnread ? "bg-accent anim-pulse" : "bg-text-2/40",
-        className
-      )}
-      aria-label={hasUnread ? "new output" : "idle"}
+      className={cn("inline-block h-2 w-2 rounded-full bg-text-2/40", className)}
+      aria-label="idle"
     />
   );
 }

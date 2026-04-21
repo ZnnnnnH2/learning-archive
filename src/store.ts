@@ -1,9 +1,25 @@
 import { create } from "zustand";
+import {
+  buildAgentShellName,
+  buildDefaultShellName,
+  type DetectedAgentLaunch,
+  normalizeShellNameMode,
+} from "./autoName";
+import {
+  DEFAULT_TERMINAL_SETTINGS,
+  normalizeTerminalSettings,
+} from "./terminalConfig";
 import type {
+  AgentKind,
+  PersistedRestoreTarget,
   PersistedState,
   Project,
+  RestoreCapability,
+  RestoreResolveStrategy,
+  RestoreTarget,
   Shell,
   ShellStatus,
+  TerminalSettings,
 } from "./types";
 import { basename, newId } from "./utils";
 import { ptyKill, savePersistedState } from "./ipc";
@@ -15,6 +31,7 @@ interface AppState {
   activeShellId: string | null;
   sidebarWidth: number;
   sidebarCollapsed: boolean;
+  terminalSettings: TerminalSettings;
   hydrated: boolean;
 
   addProject: (path: string, name?: string) => Project;
@@ -26,9 +43,27 @@ interface AppState {
   addShell: (projectId: string, opts?: { cwd?: string; name?: string }) => Shell;
   removeShell: (id: string) => void;
   renameShell: (id: string, name: string) => void;
+  startShellAgentSession: (
+    id: string,
+    launch: DetectedAgentLaunch,
+    launchedAt: number
+  ) => void;
+  setShellRestoreTarget: (
+    id: string,
+    target: RestoreTarget,
+    expectedLaunchStartedAt?: number | null
+  ) => void;
+  markShellRestoreResolveFailed: (
+    id: string,
+    expectedLaunchStartedAt?: number | null
+  ) => void;
+  clearShellRestorePending: (id: string) => void;
+  setShellTerminalTitle: (id: string, title: string) => void;
+  setShellFirstMessagePreview: (id: string, message: string) => void;
+  useAutoShellName: (id: string) => void;
   cloneShell: (id: string) => Shell | null;
   setShellStatus: (id: string, status: ShellStatus) => void;
-  setShellUnread: (id: string, v: boolean) => void;
+  setShellAttention: (id: string, v: boolean) => void;
   setShellCwd: (id: string, cwd: string) => void;
   setShellSize: (id: string, cols: number, rows: number) => void;
   setShellSession: (id: string, sessionId: string) => void;
@@ -38,6 +73,7 @@ interface AppState {
   setActive: (id: string | null) => void;
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
+  setTerminalSettings: (settings: TerminalSettings) => void;
 
   hydrateFrom: (state: PersistedState) => void;
   persist: () => Promise<void>;
@@ -52,6 +88,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeShellId: null,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarCollapsed: false,
+  terminalSettings: DEFAULT_TERMINAL_SETTINGS,
   hydrated: false,
 
   addProject: (path, name) => {
@@ -130,15 +167,33 @@ export const useAppStore = create<AppState>((set, get) => ({
     const id = newId();
     const cwd = opts?.cwd ?? project.path;
     const idx = project.shellIds.length + 1;
+    const autoName = opts?.name ?? buildDefaultShellName(idx);
     const shell: Shell = {
       id,
       sessionId: null,
       projectId,
-      name: opts?.name ?? `Shell ${idx}`,
+      name: autoName,
+      autoName,
+      nameMode: "auto",
+      agentKind: null,
+      agentLabel: null,
+      restoreCapability: null,
+      restoreCommandPrefix: null,
+      restoreCommandSuffix: null,
+      restoreFallbackCommand: null,
+      restoreTarget: null,
+      restorePending: false,
+      restoreResolvePending: false,
+      restoreResolveStrategy: null,
+      restoreLaunchStartedAt: null,
+      restoreLaunchCwd: null,
+      lazyStart: false,
+      firstMessagePreview: null,
+      terminalTitle: null,
       cwd,
       initialCwd: cwd,
       status: "idle",
-      hasUnread: false,
+      needsAttention: false,
       lastExitCode: null,
       cols: 80,
       rows: 24,
@@ -194,7 +249,189 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const sh = s.shells[id];
       if (!sh) return {};
-      return { shells: { ...s.shells, [id]: { ...sh, name } } };
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, name, nameMode: "manual" },
+        },
+      };
+    });
+    get().persist();
+  },
+
+  startShellAgentSession: (id, launch, launchedAt) => {
+    const nextLabel = launch.label.trim();
+    if (!nextLabel) return;
+    const restoreTarget = normalizeRestoreTarget(launch.explicitRestoreTarget);
+    const resolvePending = Boolean(launch.resolveStrategy && !restoreTarget);
+
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh) return {};
+      const nextShell = syncShellAutoName(
+        {
+          ...sh,
+          agentKind: launch.kind,
+          agentLabel: nextLabel,
+          restoreCapability: launch.restoreCapability,
+          restoreCommandPrefix: normalizeNullableString(
+            launch.restoreCommandPrefix
+          ),
+          restoreCommandSuffix: normalizeNullableString(
+            launch.restoreCommandSuffix
+          ),
+          restoreFallbackCommand: normalizeNullableString(
+            launch.restoreFallbackCommand
+          ),
+          restoreTarget,
+          restorePending: false,
+          restoreResolvePending: resolvePending,
+          restoreResolveStrategy: launch.resolveStrategy,
+          restoreLaunchStartedAt: resolvePending ? launchedAt : null,
+          restoreLaunchCwd: normalizeNullableString(launch.launchCwd),
+          firstMessagePreview: null,
+          terminalTitle: null,
+        },
+        s.sidebarWidth
+      );
+      if (
+        areShellNameFieldsEqual(sh, nextShell) &&
+        areShellRestoreFieldsEqual(sh, nextShell)
+      ) {
+        return {};
+      }
+
+      return {
+        shells: {
+          ...s.shells,
+          [id]: nextShell,
+        },
+      };
+    });
+    get().persist();
+  },
+
+  setShellRestoreTarget: (id, target, expectedLaunchStartedAt) => {
+    const nextTarget = normalizeRestoreTarget(target);
+    if (!nextTarget) return;
+
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh) return {};
+      if (
+        expectedLaunchStartedAt != null &&
+        sh.restoreLaunchStartedAt !== expectedLaunchStartedAt
+      ) {
+        return {};
+      }
+      const nextShell: Shell = {
+        ...sh,
+        restoreTarget: nextTarget,
+        restoreResolvePending: false,
+      };
+      if (areShellRestoreFieldsEqual(sh, nextShell)) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: nextShell,
+        },
+      };
+    });
+    get().persist();
+  },
+
+  markShellRestoreResolveFailed: (id, expectedLaunchStartedAt) => {
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh || !sh.restoreResolvePending) return {};
+      if (
+        expectedLaunchStartedAt != null &&
+        sh.restoreLaunchStartedAt !== expectedLaunchStartedAt
+      ) {
+        return {};
+      }
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, restoreResolvePending: false },
+        },
+      };
+    });
+    get().persist();
+  },
+
+  clearShellRestorePending: (id) => {
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh || !sh.restorePending) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, restorePending: false },
+        },
+      };
+    });
+  },
+
+  setShellTerminalTitle: (id, title) => {
+    const nextTitle = normalizeTerminalTitle(title);
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh) return {};
+      const nextShell = syncShellAutoName(
+        {
+          ...sh,
+          terminalTitle: nextTitle,
+        },
+        s.sidebarWidth
+      );
+      if (areShellNameFieldsEqual(sh, nextShell)) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: nextShell,
+        },
+      };
+    });
+    get().persist();
+  },
+
+  setShellFirstMessagePreview: (id, message) => {
+    const nextMessage = message.trim();
+    if (!nextMessage) return;
+
+    set((s) => {
+      const sh = s.shells[id];
+      if (!sh || !sh.agentLabel) return {};
+      const nextShell = syncShellAutoName(
+        {
+          ...sh,
+          firstMessagePreview: nextMessage,
+        },
+        s.sidebarWidth
+      );
+      if (areShellNameFieldsEqual(sh, nextShell)) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: nextShell,
+        },
+      };
+    });
+    get().persist();
+  },
+
+  useAutoShellName: (id) => {
+    set((s) => {
+      const sh = s.shells[id];
+      const nextName = sh?.autoName?.trim();
+      if (!sh || !nextName) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, name: nextName, nameMode: "auto" },
+        },
+      };
     });
     get().persist();
   },
@@ -212,11 +449,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       return { shells: { ...s.shells, [id]: { ...sh, status } } };
     }),
 
-  setShellUnread: (id, v) =>
+  setShellAttention: (id, v) =>
     set((s) => {
       const sh = s.shells[id];
-      if (!sh || sh.hasUnread === v) return {};
-      return { shells: { ...s.shells, [id]: { ...sh, hasUnread: v } } };
+      if (!sh || sh.needsAttention === v) return {};
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, needsAttention: v },
+        },
+      };
     }),
 
   setShellCwd: (id, cwd) => {
@@ -239,7 +481,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const sh = s.shells[id];
       if (!sh) return {};
-      return { shells: { ...s.shells, [id]: { ...sh, sessionId } } };
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, sessionId, lazyStart: false },
+        },
+      };
     }),
 
   setShellExit: (id, code) => {
@@ -252,6 +499,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           [id]: {
             ...sh,
             sessionId: null,
+            lazyStart: false,
             lastExitCode: code,
             status: code === 0 ? "exited" : "error",
           },
@@ -275,43 +523,133 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setActive: (id) => {
-    set({ activeShellId: id });
+    set((s) => {
+      if (!id) {
+        return { activeShellId: null };
+      }
+      const sh = s.shells[id];
+      if (!sh || !sh.lazyStart) {
+        return { activeShellId: id };
+      }
+      return {
+        activeShellId: id,
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, lazyStart: false },
+        },
+      };
+    });
     if (id) {
       const sh = get().shells[id];
-      if (sh?.hasUnread) {
-        get().setShellUnread(id, false);
+      if (sh?.needsAttention) {
+        get().setShellAttention(id, false);
       }
     }
     get().persist();
   },
 
   setSidebarWidth: (w) => {
-    set({ sidebarWidth: Math.max(180, Math.min(560, w)) });
+    const nextWidth = Math.max(180, Math.min(560, w));
+    set((s) => {
+      const nextShells: Record<string, Shell> = {};
+      let changed = s.sidebarWidth !== nextWidth;
+
+      for (const [id, sh] of Object.entries(s.shells)) {
+        const nextShell = syncShellAutoName(sh, nextWidth);
+        nextShells[id] = nextShell;
+        if (!changed && !areShellNameFieldsEqual(sh, nextShell)) {
+          changed = true;
+        }
+      }
+
+      if (!changed) return {};
+      return {
+        sidebarWidth: nextWidth,
+        shells: nextShells,
+      };
+    });
     get().persist();
   },
 
   toggleSidebar: () =>
     set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
+  setTerminalSettings: (settings) => {
+    set({ terminalSettings: normalizeTerminalSettings(settings) });
+    get().persist();
+  },
+
   hydrateFrom: (state) => {
     const projects: Record<string, Project> = {};
     const shells: Record<string, Shell> = {};
     const projectOrder: string[] = [];
+    const sidebarWidth = state.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH;
+    const terminalSettings = normalizeTerminalSettings(state.terminal);
     for (const p of state.projects ?? []) {
       const shellIds: string[] = [];
       for (const s of p.shells ?? []) {
+        const nameMode = normalizeShellNameMode(s.nameMode, s.name);
+        const agentKind =
+          normalizeAgentKind(s.agentKind) ??
+          inferAgentKindFromLabel(s.agentLabel ?? null);
+        const restoreTarget = normalizeRestoreTarget(s.restoreTarget);
+        const restoreFallbackCommand =
+          normalizeNullableString(s.restoreFallbackCommand) ??
+          normalizeNullableString(s.resumeCommand);
+        const restoreResolveStrategy = normalizeRestoreResolveStrategy(
+          s.restoreResolveStrategy
+        );
+        const restoreResolvePending = Boolean(
+          !restoreTarget &&
+            s.restoreResolvePending &&
+            restoreResolveStrategy &&
+            s.restoreLaunchStartedAt
+        );
+        const hydratedShell = syncShellAutoName(
+          {
+            id: s.id,
+            sessionId: null,
+            projectId: p.id,
+            name: s.name,
+            autoName: s.autoName ?? (nameMode === "auto" ? s.name : null),
+            nameMode,
+            agentKind,
+            agentLabel: s.agentLabel ?? null,
+            restoreCapability:
+              normalizeRestoreCapability(s.restoreCapability) ??
+              inferRestoreCapability(agentKind, restoreTarget, restoreFallbackCommand),
+            restoreCommandPrefix: normalizeNullableString(
+              s.restoreCommandPrefix
+            ),
+            restoreCommandSuffix: normalizeNullableString(
+              s.restoreCommandSuffix
+            ),
+            restoreFallbackCommand,
+            restoreTarget,
+            restorePending: Boolean(restoreTarget || restoreFallbackCommand),
+            restoreResolvePending,
+            restoreResolveStrategy,
+            restoreLaunchStartedAt:
+              typeof s.restoreLaunchStartedAt === "number"
+                ? s.restoreLaunchStartedAt
+                : null,
+            restoreLaunchCwd: normalizeNullableString(s.restoreLaunchCwd),
+            lazyStart: true,
+            firstMessagePreview: s.firstMessagePreview ?? null,
+            terminalTitle: normalizeTerminalTitle(s.terminalTitle),
+            cwd: s.cwd,
+            initialCwd: s.cwd,
+            status: "idle",
+            needsAttention: false,
+            lastExitCode: null,
+            cols: 80,
+            rows: 24,
+          },
+          sidebarWidth
+        );
         shells[s.id] = {
+          ...hydratedShell,
           id: s.id,
-          sessionId: null,
-          projectId: p.id,
-          name: s.name,
-          cwd: s.cwd,
-          initialCwd: s.cwd,
-          status: "idle",
-          hasUnread: false,
-          lastExitCode: null,
-          cols: 80,
-          rows: 24,
         };
         shellIds.push(s.id);
       }
@@ -335,7 +673,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       shells,
       projectOrder,
       activeShellId: active,
-      sidebarWidth: state.sidebarWidth ?? DEFAULT_SIDEBAR_WIDTH,
+      sidebarWidth,
+      terminalSettings,
       hydrated: true,
     });
   },
@@ -352,12 +691,32 @@ export const useAppStore = create<AppState>((set, get) => ({
           path: p.path,
           shells: p.shellIds.map((sid) => {
             const sh = s.shells[sid];
-            return { id: sh.id, name: sh.name, cwd: sh.cwd || sh.initialCwd };
+            return {
+              id: sh.id,
+              name: sh.name,
+              autoName: sh.autoName,
+              nameMode: sh.nameMode,
+              agentKind: sh.agentKind,
+              agentLabel: sh.agentLabel,
+              restoreCapability: sh.restoreCapability,
+              restoreCommandPrefix: sh.restoreCommandPrefix,
+              restoreCommandSuffix: sh.restoreCommandSuffix,
+              restoreFallbackCommand: sh.restoreFallbackCommand,
+              restoreTarget: sh.restoreTarget,
+              restoreResolvePending: sh.restoreResolvePending,
+              restoreResolveStrategy: sh.restoreResolveStrategy,
+              restoreLaunchStartedAt: sh.restoreLaunchStartedAt,
+              restoreLaunchCwd: sh.restoreLaunchCwd,
+              firstMessagePreview: sh.firstMessagePreview,
+              terminalTitle: sh.terminalTitle,
+              cwd: sh.cwd || sh.initialCwd,
+            };
           }),
         };
       }),
       activeShellId: s.activeShellId,
       sidebarWidth: s.sidebarWidth,
+      terminal: s.terminalSettings,
     };
     try {
       await savePersistedState(snapshot);
@@ -379,5 +738,137 @@ function pickNextActive(
       if (shells[sid]) return sid;
     }
   }
+  return null;
+}
+
+function syncShellAutoName(shell: Shell, sidebarWidth: number): Shell {
+  const terminalTitle = normalizeTerminalTitle(shell.terminalTitle);
+  const fallbackName = shell.autoName ?? shell.name;
+  const autoName =
+    terminalTitle
+      ? terminalTitle
+      : buildAgentShellName(
+          shell.agentLabel,
+          shell.firstMessagePreview,
+          fallbackName,
+          sidebarWidth
+        );
+  return {
+    ...shell,
+    terminalTitle,
+    autoName,
+    name: shell.nameMode === "auto" ? autoName : shell.name,
+  };
+}
+
+function areShellNameFieldsEqual(a: Shell, b: Shell): boolean {
+  return (
+    a.name === b.name &&
+    a.autoName === b.autoName &&
+    a.nameMode === b.nameMode &&
+    a.agentKind === b.agentKind &&
+    a.agentLabel === b.agentLabel &&
+    a.firstMessagePreview === b.firstMessagePreview &&
+    a.terminalTitle === b.terminalTitle
+  );
+}
+
+function areShellRestoreFieldsEqual(a: Shell, b: Shell): boolean {
+  return (
+    a.agentKind === b.agentKind &&
+    a.restoreCapability === b.restoreCapability &&
+    a.restoreCommandPrefix === b.restoreCommandPrefix &&
+    a.restoreCommandSuffix === b.restoreCommandSuffix &&
+    a.restoreFallbackCommand === b.restoreFallbackCommand &&
+    a.restorePending === b.restorePending &&
+    a.restoreResolvePending === b.restoreResolvePending &&
+    a.restoreResolveStrategy === b.restoreResolveStrategy &&
+    a.restoreLaunchStartedAt === b.restoreLaunchStartedAt &&
+    a.restoreLaunchCwd === b.restoreLaunchCwd &&
+    areRestoreTargetsEqual(a.restoreTarget, b.restoreTarget)
+  );
+}
+
+function areRestoreTargetsEqual(
+  a: RestoreTarget | null,
+  b: RestoreTarget | null
+): boolean {
+  return a?.kind === b?.kind && a?.value === b?.value;
+}
+
+function normalizeTerminalTitle(title: string | null | undefined): string | null {
+  const normalized = title?.trim() ?? "";
+  return normalized || null;
+}
+
+function normalizeNullableString(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized || null;
+}
+
+function normalizeRestoreTarget(
+  target: RestoreTarget | PersistedRestoreTarget | null | undefined
+): RestoreTarget | null {
+  const value = normalizeNullableString(target?.value);
+  if (!target || !value) return null;
+  if (target.kind !== "thread_id" && target.kind !== "session_id") return null;
+  return {
+    kind: target.kind,
+    value,
+  };
+}
+
+function normalizeAgentKind(value: string | null | undefined): AgentKind | null {
+  if (
+    value === "codex" ||
+    value === "claude" ||
+    value === "gemini" ||
+    value === "opencode"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function inferAgentKindFromLabel(label: string | null): AgentKind | null {
+  const normalized = label?.trim().toLowerCase();
+  if (normalized === "codex") return "codex";
+  if (normalized === "claude") return "claude";
+  if (normalized === "gemini") return "gemini";
+  if (normalized === "opencode") return "opencode";
+  return null;
+}
+
+function normalizeRestoreCapability(
+  value: string | null | undefined
+): RestoreCapability | null {
+  if (
+    value === "exact" ||
+    value === "recent" ||
+    value === "best_effort" ||
+    value === "unsupported"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function normalizeRestoreResolveStrategy(
+  value: string | null | undefined
+): RestoreResolveStrategy | null {
+  if (value === "codex_new_thread" || value === "codex_latest_cwd") {
+    return value;
+  }
+  return null;
+}
+
+function inferRestoreCapability(
+  agentKind: AgentKind | null,
+  restoreTarget: RestoreTarget | null,
+  restoreFallbackCommand: string | null
+): RestoreCapability | null {
+  if (agentKind === "codex" && restoreTarget) return "exact";
+  if (agentKind === "codex" && restoreFallbackCommand) return "exact";
+  if (agentKind && restoreFallbackCommand) return "recent";
   return null;
 }

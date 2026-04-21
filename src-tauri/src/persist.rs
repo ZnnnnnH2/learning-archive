@@ -3,9 +3,48 @@ use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct RestoreTargetRecord {
+    pub kind: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct ShellRecord {
     pub id: String,
     pub name: String,
+    #[serde(default)]
+    pub auto_name: Option<String>,
+    #[serde(default)]
+    pub name_mode: Option<String>,
+    #[serde(default)]
+    pub agent_kind: Option<String>,
+    #[serde(default)]
+    pub agent_label: Option<String>,
+    #[serde(default)]
+    pub restore_capability: Option<String>,
+    #[serde(default)]
+    pub restore_command_prefix: Option<String>,
+    #[serde(default)]
+    pub restore_command_suffix: Option<String>,
+    #[serde(default)]
+    pub restore_fallback_command: Option<String>,
+    #[serde(default)]
+    pub restore_target: Option<RestoreTargetRecord>,
+    #[serde(default)]
+    pub restore_resolve_pending: Option<bool>,
+    #[serde(default)]
+    pub restore_resolve_strategy: Option<String>,
+    #[serde(default)]
+    pub restore_launch_started_at: Option<i64>,
+    #[serde(default)]
+    pub restore_launch_cwd: Option<String>,
+    #[serde(default)]
+    pub resume_command: Option<String>,
+    #[serde(default)]
+    pub first_message_preview: Option<String>,
+    #[serde(default)]
+    pub terminal_title: Option<String>,
     pub cwd: String,
 }
 
@@ -21,6 +60,17 @@ pub struct ProjectRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct TerminalSettingsRecord {
+    #[serde(default)]
+    pub shell_executable: Option<String>,
+    #[serde(default)]
+    pub font_family: Option<String>,
+    #[serde(default)]
+    pub extra_env_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct SessionState {
     #[serde(default)]
     pub projects: Vec<ProjectRecord>,
@@ -30,6 +80,8 @@ pub struct SessionState {
     pub active_shell_id: Option<String>,
     #[serde(default)]
     pub sidebar_width: Option<u32>,
+    #[serde(default)]
+    pub terminal: TerminalSettingsRecord,
 }
 
 pub fn config_file() -> PathBuf {

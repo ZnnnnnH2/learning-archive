@@ -1,14 +1,23 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { PersistedState } from "./types";
+import type {
+  AgentKind,
+  PersistedState,
+  RestoreResolveStrategy,
+  RestoreTarget,
+} from "./types";
+import type { PtySpawnOptions } from "./terminalConfig";
+
+export type ExternalEditor = "vscode" | "zed";
 
 export async function ptySpawn(
   projectId: string,
   cwd: string,
   rows: number,
-  cols: number
+  cols: number,
+  options?: PtySpawnOptions
 ): Promise<string> {
-  return invoke<string>("pty_spawn", { projectId, cwd, rows, cols });
+  return invoke<string>("pty_spawn", { projectId, cwd, rows, cols, options });
 }
 
 export async function ptyWrite(sessionId: string, data: string): Promise<void> {
@@ -48,6 +57,40 @@ export async function savePersistedState(state: PersistedState): Promise<void> {
 
 export async function pathExists(path: string): Promise<boolean> {
   return invoke<boolean>("path_exists", { path });
+}
+
+export interface AgentRestoreResolveRequest {
+  agentKind: AgentKind;
+  strategy: RestoreResolveStrategy;
+  cwd: string;
+  launchStartedAt: number | null;
+}
+
+export interface AgentRestoreResolveResult {
+  target: RestoreTarget;
+  createdAtMs: number | null;
+  cwd: string | null;
+  rolloutPath: string | null;
+  source: "state_db" | "rollout";
+}
+
+export async function resolveAgentRestoreTarget(
+  request: AgentRestoreResolveRequest
+): Promise<AgentRestoreResolveResult | null> {
+  return invoke<AgentRestoreResolveResult | null>("resolve_agent_restore_target", {
+    request,
+  });
+}
+
+export async function openProjectInEditor(
+  editor: ExternalEditor,
+  path: string
+): Promise<void> {
+  await invoke("open_project_in_editor", { editor, path });
+}
+
+export async function openProjectInFileManager(path: string): Promise<void> {
+  await invoke("open_project_in_file_manager", { path });
 }
 
 export interface PtyDataEvent {

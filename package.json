@@ -1,13 +1,15 @@
 {
   "name": "sideshell",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.4.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "release": "node scripts/release.mjs",
+    "release:full": "node scripts/release.mjs --bundles nsis,msi"
   },
   "dependencies": {
     "@radix-ui/react-context-menu": "^2.2.16",

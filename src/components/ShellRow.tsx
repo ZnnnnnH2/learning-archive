@@ -1,6 +1,6 @@
 import { useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
-import { TerminalSquare, X, Pencil, Copy, GitFork } from "lucide-react";
+import { TerminalSquare, X, Pencil, Copy, GitFork, Sparkles } from "lucide-react";
 import { useAppStore } from "../store";
 import { StatusDot } from "./StatusDot";
 import { cn, shortenPath } from "../utils";
@@ -15,6 +15,7 @@ export function ShellRow({ shellId }: Props) {
   const setActive = useAppStore((s) => s.setActive);
   const removeShell = useAppStore((s) => s.removeShell);
   const renameShell = useAppStore((s) => s.renameShell);
+  const useAutoShellName = useAppStore((s) => s.useAutoShellName);
   const cloneShell = useAppStore((s) => s.cloneShell);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
@@ -88,7 +89,10 @@ export function ShellRow({ shellId }: Props) {
               </span>
             )}
           </div>
-          <StatusDot status={shell.status} hasUnread={shell.hasUnread} />
+          <StatusDot
+            status={shell.status}
+            needsAttention={shell.needsAttention}
+          />
           <button
             onClick={(e) => {
               e.stopPropagation();
@@ -117,6 +121,12 @@ export function ShellRow({ shellId }: Props) {
             }}
           >
             <Pencil size={13} /> Rename
+          </ContextMenu.Item>
+          <ContextMenu.Item
+            className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"
+            onSelect={() => useAutoShellName(shellId)}
+          >
+            <Sparkles size={13} /> Use auto name
           </ContextMenu.Item>
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"

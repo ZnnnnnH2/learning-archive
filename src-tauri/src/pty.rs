@@ -1,3 +1,4 @@
+use crate::shell_integration::prepare_shell_launch;
 use anyhow::Result;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use parking_lot::Mutex;
@@ -25,6 +26,15 @@ pub struct SessionInfo {
 pub struct PtyAttachSnapshot {
     pub data: String,
     pub last_seq: u64,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PtySpawnOptions {
+    #[serde(default)]
+    pub shell_executable: Option<String>,
+    #[serde(default)]
+    pub extra_env: HashMap<String, String>,
 }
 
 struct BufferedOutput {
@@ -139,6 +149,7 @@ pub fn spawn_session(
     cwd: String,
     rows: u16,
     cols: u16,
+    options: PtySpawnOptions,
 ) -> Result<String> {
     let sys = native_pty_system();
     let pair = sys.openpty(PtySize {
@@ -148,15 +159,26 @@ pub fn spawn_session(
         pixel_height: 0,
     })?;
 
-    let shell = default_shell();
-    let mut cmd = CommandBuilder::new(&shell);
+    let shell = resolve_shell(&options);
+    let launch = prepare_shell_launch(&shell)?;
+    let mut cmd = CommandBuilder::new(&launch.executable);
+    for arg in &launch.args {
+        cmd.arg(arg);
+    }
     cmd.cwd(&cwd);
     for (k, v) in std::env::vars() {
+        cmd.env(k, v);
+    }
+    for (k, v) in options.extra_env {
+        cmd.env(k, v);
+    }
+    for (k, v) in launch.env {
         cmd.env(k, v);
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
     cmd.env("SIDESHELL", "1");
+    cmd.env("SIDESHELL_SHELL_INTEGRATION", "1");
 
     let mut child = pair.slave.spawn_command(cmd)?;
     drop(pair.slave);
@@ -242,6 +264,16 @@ fn default_shell() -> String {
     {
         std::env::var("SHELL").unwrap_or_else(|_| "/bin/bash".to_string())
     }
+}
+
+fn resolve_shell(options: &PtySpawnOptions) -> String {
+    options
+        .shell_executable
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(default_shell)
 }
 
 #[cfg(target_os = "windows")]
