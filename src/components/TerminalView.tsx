@@ -28,11 +28,12 @@ import {
   buildPtySpawnOptions,
   DEFAULT_TERMINAL_FONT_FAMILY,
 } from "../terminalConfig";
+import { matchShortcutAction } from "../shortcuts";
 import { translate } from "../i18n";
 import { dismissShellAlert, raiseShellAlert } from "../shellAlerts";
 import { base64ToBytes, stringToBase64 } from "../utils";
 import { useAppStore } from "../store";
-import type { Shell } from "../types";
+import type { Shell, ShortcutKeymap } from "../types";
 
 interface Props {
   shell: Shell;
@@ -84,10 +85,14 @@ function TerminalViewComponent({ shell, active }: Props) {
   const queuedWriteBytesRef = useRef(0);
   const disposedRef = useRef(false);
   const typedInputRef = useRef("");
+  const shortcutKeymapRef = useRef<ShortcutKeymap>(
+    useAppStore.getState().terminalSettings.shortcutKeymap
+  );
   const terminalFontFamily = useAppStore(
     (s) => s.terminalSettings.fontFamily
   );
   const locale = useAppStore((s) => s.terminalSettings.locale);
+  const shortcutKeymap = useAppStore((s) => s.terminalSettings.shortcutKeymap);
 
   // Store getters (avoid re-subscribing on every change)
   const setShellSession = useAppStore((s) => s.setShellSession);
@@ -187,6 +192,10 @@ function TerminalViewComponent({ shell, active }: Props) {
     }, 900);
   };
 
+  useEffect(() => {
+    shortcutKeymapRef.current = shortcutKeymap;
+  }, [shortcutKeymap]);
+
   // Mount xterm once per shell id
   useLayoutEffect(() => {
     if (!hostRef.current) return;
@@ -221,6 +230,9 @@ function TerminalViewComponent({ shell, active }: Props) {
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    term.attachCustomKeyEventHandler((event) =>
+      handleTerminalShortcut(term, shortcutKeymapRef.current, event)
+    );
     term.open(hostRef.current);
     try {
       fit.fit();
@@ -525,9 +537,47 @@ function TerminalViewComponent({ shell, active }: Props) {
         pointerEvents: active ? "auto" : "none",
       }}
     >
-      <div ref={hostRef} className="w-full h-full" />
+      <div ref={hostRef} className="xterm-host w-full h-full" />
     </div>
   );
 }
 
 export const TerminalView = memo(TerminalViewComponent);
+
+function handleTerminalShortcut(
+  term: Terminal,
+  shortcutKeymap: ShortcutKeymap,
+  event: KeyboardEvent
+): boolean {
+  const actionId = matchShortcutAction(shortcutKeymap, event, "terminal");
+  if (!actionId) return true;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (actionId === "terminal.copySelection") {
+    const selection = term.hasSelection() ? term.getSelection() : "";
+    if (selection && navigator.clipboard) {
+      void navigator.clipboard.writeText(selection).catch((error) => {
+        console.warn("terminal copy failed", error);
+      });
+    }
+    return false;
+  }
+
+  if (actionId === "terminal.pasteClipboard") {
+    if (navigator.clipboard) {
+      void navigator.clipboard
+        .readText()
+        .then((text) => {
+          if (text) term.paste(text);
+        })
+        .catch((error) => {
+          console.warn("terminal paste failed", error);
+        });
+    }
+    return false;
+  }
+
+  return true;
+}

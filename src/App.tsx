@@ -4,9 +4,11 @@ import { ShellAlertsOverlay } from "./components/ShellAlertsOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalHost } from "./components/TerminalHost";
 import { loadPersistedState, onShellNotificationActivated } from "./ipc";
+import { matchShortcutAction } from "./shortcuts";
 import { activateShellAlertByTag } from "./shellAlerts";
 import { useI18n } from "./useI18n";
 import { useAppStore } from "./store";
+import type { ShortcutActionId } from "./types";
 
 export default function App() {
   const { locale, t } = useI18n();
@@ -21,6 +23,7 @@ export default function App() {
   const cloneShell = useAppStore((s) => s.cloneShell);
   const removeShell = useAppStore((s) => s.removeShell);
   const setActive = useAppStore((s) => s.setActive);
+  const shortcutKeymap = useAppStore((s) => s.terminalSettings.shortcutKeymap);
 
   useEffect(() => {
     primeAlertSound();
@@ -86,42 +89,47 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const mod = e.ctrlKey || e.metaKey;
-      if (mod && (e.key === "b" || e.key === "B")) {
-        e.preventDefault();
+      if (isEditableShortcutTarget(e.target) || isTerminalShortcutTarget(e.target)) {
+        return;
+      }
+
+      const actionId = matchShortcutAction(shortcutKeymap, e, "app");
+      if (!actionId) return;
+
+      e.preventDefault();
+      handleAppShortcut(actionId);
+    };
+
+    const handleAppShortcut = (actionId: ShortcutActionId) => {
+      if (actionId === "app.toggleSidebar") {
         toggleSidebar();
-        return;
-      }
-      if (mod && (e.key === "t" || e.key === "T")) {
-        e.preventDefault();
+      } else if (actionId === "app.newShell") {
         const active = useAppStore.getState().shells[activeShellId ?? ""];
-        const pid = active?.projectId ?? projectOrder[0];
-        if (pid && projects[pid]) addShell(pid);
-        return;
-      }
-      if (mod && e.shiftKey && (e.key === "d" || e.key === "D")) {
-        e.preventDefault();
+        const projectId = active?.projectId ?? projectOrder[0];
+        if (projectId && projects[projectId]) addShell(projectId);
+      } else if (actionId === "app.cloneShell") {
         if (activeShellId) cloneShell(activeShellId);
-        return;
-      }
-      if (mod && (e.key === "w" || e.key === "W")) {
-        e.preventDefault();
+      } else if (actionId === "app.closeShell") {
         if (activeShellId) removeShell(activeShellId);
-        return;
-      }
-      if (mod && e.key >= "1" && e.key <= "9") {
-        const idx = parseInt(e.key, 10) - 1;
-        const flat: string[] = [];
-        for (const pid of projectOrder) {
-          for (const sid of projects[pid]?.shellIds ?? []) flat.push(sid);
-        }
-        const target = flat[idx];
-        if (target) {
-          e.preventDefault();
-          setActive(target);
-        }
+      } else if (actionId.startsWith("app.focusShell")) {
+        const shellNumber = Number(actionId.replace("app.focusShell", ""));
+        focusShellByIndex(shellNumber - 1);
       }
     };
+
+    const focusShellByIndex = (index: number) => {
+      const flat: string[] = [];
+      for (const projectId of projectOrder) {
+        for (const shellId of projects[projectId]?.shellIds ?? []) {
+          flat.push(shellId);
+        }
+      }
+      const target = flat[index];
+      if (target) {
+        setActive(target);
+      }
+    };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [
@@ -132,6 +140,7 @@ export default function App() {
     projects,
     removeShell,
     setActive,
+    shortcutKeymap,
     toggleSidebar,
   ]);
 
@@ -150,4 +159,18 @@ export default function App() {
       <ShellAlertsOverlay />
     </div>
   );
+}
+
+function isEditableShortcutTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  if (target.isContentEditable) return true;
+  return Boolean(
+    target.closest(
+      "input, textarea, select, [contenteditable='true'], [data-app-shortcuts='ignore']"
+    )
+  );
+}
+
+function isTerminalShortcutTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && Boolean(target.closest(".xterm-host, .xterm"));
 }
