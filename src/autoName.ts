@@ -1,8 +1,5 @@
 import type {
   AgentKind,
-  RestoreCapability,
-  RestoreResolveStrategy,
-  RestoreTarget,
   ShellNameMode,
 } from "./types";
 import { basename } from "./utils";
@@ -13,18 +10,63 @@ const SIDEBAR_GUTTER_PX = 96;
 const ASCII_CHAR_PX = 7;
 const MIN_NAME_WIDTH = 14;
 const NAME_SEPARATOR = "|";
+const CODEX_TITLE_SPINNER_RE = /^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏]\s*/u;
+
+const TASK_SUMMARY_LEAD_PATTERNS = [
+  /^(?:please\s+)?(?:can|could|would)\s+you\s+/i,
+  /^(?:please\s+)?help\s+me\s+/i,
+  /^(?:please\s+)?(?:take a look at|look at|check out)\s+/i,
+  /^(?:请你|请|麻烦你|麻烦|帮我|帮忙|我想让你|我想请你|想让你|能不能|可以)\s*/u,
+  /^(?:看一下|看下|看看|瞅一下|瞅瞅)\s*/u,
+] as const;
+
+const LOW_SIGNAL_TASK_SUMMARY_PATTERNS = [
+  /^(?:ok(?:ay)?|yes|yeah|yep|sure|go ahead|sounds good|continue)$/i,
+  /^(?:好(?:的|吧)?|行|可以|收到|是的?|对(?:的)?|嗯)$/u,
+  /^(?:继续(?:吧|做|搞|处理|实现)?|开始吧|实现(?:吧)?|做吧|搞吧)$/u,
+] as const;
+
+const COMMON_SHELL_COMMANDS = new Set([
+  "bash",
+  "bun",
+  "bunx",
+  "cargo",
+  "cat",
+  "cd",
+  "claude",
+  "claude-code",
+  "cmd",
+  "codex",
+  "dir",
+  "fish",
+  "gemini",
+  "gemini-cli",
+  "git",
+  "ls",
+  "mkdir",
+  "node",
+  "npm",
+  "npx",
+  "opencode",
+  "pnpm",
+  "pnpx",
+  "powershell",
+  "pwsh",
+  "python",
+  "python3",
+  "pytest",
+  "rg",
+  "uv",
+  "uvx",
+  "yarn",
+  "zsh",
+]);
 
 export interface DetectedAgentLaunch {
   kind: AgentKind;
   label: string;
-  restoreCapability: RestoreCapability;
-  restoreCommandPrefix: string | null;
-  restoreCommandSuffix: string | null;
-  restoreFallbackCommand: string | null;
+  resumeEntryCommand: string | null;
   newSessionCommand: string | null;
-  explicitRestoreTarget: RestoreTarget | null;
-  resolveStrategy: RestoreResolveStrategy | null;
-  launchCwd: string | null;
 }
 
 type CommandToken = {
@@ -35,24 +77,7 @@ type CommandToken = {
 type AgentLaunchSpec = {
   kind: AgentKind;
   label: string;
-  restoreCapability: RestoreCapability;
   resumeArgs: readonly string[];
-};
-
-type ExactRestoreTemplate = {
-  prefix: string | null;
-  suffix: string | null;
-};
-
-type CodexLaunchPlan = {
-  restoreCapability: RestoreCapability;
-  restoreCommandPrefix: string | null;
-  restoreCommandSuffix: string | null;
-  restoreFallbackCommand: string | null;
-  newSessionCommand: string | null;
-  explicitRestoreTarget: RestoreTarget | null;
-  resolveStrategy: RestoreResolveStrategy | null;
-  launchCwd: string | null;
 };
 
 const CODEX_SUBCOMMANDS = new Set([
@@ -144,7 +169,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "codex",
       label: "Codex",
-      restoreCapability: "exact",
       resumeArgs: [],
     },
   ],
@@ -153,7 +177,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "claude",
       label: "Claude",
-      restoreCapability: "recent",
       resumeArgs: ["--continue"],
     },
   ],
@@ -162,7 +185,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "claude",
       label: "Claude",
-      restoreCapability: "recent",
       resumeArgs: ["--continue"],
     },
   ],
@@ -171,7 +193,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "gemini",
       label: "Gemini",
-      restoreCapability: "recent",
       resumeArgs: ["-r", "latest"],
     },
   ],
@@ -180,7 +201,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "gemini",
       label: "Gemini",
-      restoreCapability: "recent",
       resumeArgs: ["-r", "latest"],
     },
   ],
@@ -189,7 +209,6 @@ const AGENT_LAUNCH_SPECS = new Map<string, AgentLaunchSpec>([
     {
       kind: "opencode",
       label: "OpenCode",
-      restoreCapability: "recent",
       resumeArgs: ["--continue"],
     },
   ],
@@ -239,21 +258,21 @@ export function normalizeShellNameMode(
 
 export function detectAgentLaunchFromCommand(
   line: string,
-  currentCwd?: string | null
+  _currentCwd?: string | null
 ): DetectedAgentLaunch | null {
   const tokens = tokenizeCommandTokens(line);
   if (tokens.length === 0) return null;
 
   const direct = agentLaunchForToken(tokens[0].value);
   if (direct) {
-    return buildDetectedAgentLaunchFromIndex(tokens, 0, currentCwd ?? null);
+    return buildDetectedAgentLaunchFromIndex(tokens, 0);
   }
 
   const normalized = normalizeCommandToken(tokens[0].value);
   for (const sequence of WRAPPER_SEQUENCES) {
     if (!matchesSequence(tokens, sequence)) continue;
     const targetIndex = firstNonFlagTokenIndex(tokens, sequence.length);
-    return buildDetectedAgentLaunchFromIndex(tokens, targetIndex, currentCwd ?? null);
+    return buildDetectedAgentLaunchFromIndex(tokens, targetIndex);
   }
 
   if (
@@ -262,7 +281,7 @@ export function detectAgentLaunchFromCommand(
     normalized === "pwsh"
   ) {
     const targetIndex = commandAfterExecutionFlagIndex(tokens);
-    return buildDetectedAgentLaunchFromIndex(tokens, targetIndex, currentCwd ?? null);
+    return buildDetectedAgentLaunchFromIndex(tokens, targetIndex);
   }
 
   return null;
@@ -275,50 +294,27 @@ export function detectAutoNameFromCommand(
   return detectAgentLaunchFromCommand(line, currentCwd)?.label ?? null;
 }
 
-export function buildAgentRestoreCommand(options: {
-  kind: AgentKind | null;
-  restoreCommandPrefix: string | null;
-  restoreCommandSuffix: string | null;
-  restoreFallbackCommand: string | null;
-  restoreTarget: RestoreTarget | null;
-}): string | null {
-  const {
-    kind,
-    restoreCommandPrefix,
-    restoreCommandSuffix,
-    restoreFallbackCommand,
-    restoreTarget,
-  } = options;
-  if (kind === "codex" && restoreTarget && restoreCommandPrefix) {
-    const sanitizedPrefix = sanitizeCodexRestorePrefix(restoreCommandPrefix);
-    const target = restoreTarget.value.trim();
-    if (!target || !sanitizedPrefix) return restoreFallbackCommand;
-    const targetSegment = target.startsWith("-") ? `-- ${target}` : target;
-    return joinCommandParts([
-      sanitizedPrefix,
-      targetSegment,
-      restoreCommandSuffix,
-    ]);
+export function buildDefaultAgentResumeEntryCommand(
+  kind: AgentKind | null
+): string | null {
+  switch (kind) {
+    case "codex":
+      return "codex resume";
+    case "claude":
+      return "claude --resume";
+    case "gemini":
+      return "gemini --list-sessions";
+    case "opencode":
+      return "opencode session list";
+    default:
+      return null;
   }
-  return restoreFallbackCommand;
 }
 
 export function buildDefaultAgentNewSessionCommand(
   kind: AgentKind | null
 ): string | null {
   return kind ? DEFAULT_AGENT_NEW_SESSION_COMMANDS[kind] : null;
-}
-
-export function sanitizeAgentRestoreCommandPrefix(
-  kind: AgentKind | null,
-  prefix: string | null
-): string | null {
-  const normalized = prefix?.trim() ?? "";
-  if (!normalized) return null;
-  if (kind === "codex") {
-    return sanitizeCodexRestorePrefix(normalized);
-  }
-  return normalized;
 }
 
 export function buildAgentShellName(
@@ -354,6 +350,73 @@ export function normalizeFirstMessagePreview(
 ): string | null {
   const normalized = (message ?? "").replace(/\s+/g, " ").trim();
   return normalized || null;
+}
+
+export function summarizeAgentTaskFromInput(
+  message: string | null | undefined
+): string | null {
+  const normalized = normalizeFirstMessagePreview(message);
+  if (!normalized) return null;
+  if (normalized.startsWith("/")) return null;
+  if (looksLikeShellCommandMessage(normalized)) return null;
+
+  let summary = normalized;
+  for (let pass = 0; pass < TASK_SUMMARY_LEAD_PATTERNS.length; pass += 1) {
+    let changed = false;
+    for (const pattern of TASK_SUMMARY_LEAD_PATTERNS) {
+      const next = summary.replace(pattern, "").trim();
+      if (next && next !== summary) {
+        summary = next;
+        changed = true;
+      }
+    }
+    if (!changed) break;
+  }
+
+  summary = summary
+    .split(/[。！？!?]/, 1)[0]
+    ?.replace(/^[,，:：;；\-|\s]+|[,，:：;；\-|\s]+$/g, "")
+    .trim();
+
+  if (!summary) return null;
+  if (LOW_SIGNAL_TASK_SUMMARY_PATTERNS.some((pattern) => pattern.test(summary))) {
+    return null;
+  }
+
+  if (!containsCjk(summary) && measureDisplayWidth(summary) < 4) {
+    return null;
+  }
+
+  return summary;
+}
+
+export function buildCodexSummaryShellName(
+  taskSummary: string | null | undefined,
+  terminalTitle: string | null | undefined,
+  sidebarWidth = DEFAULT_SIDEBAR_WIDTH
+): string | null {
+  const summary = normalizeFirstMessagePreview(taskSummary);
+  if (!summary) return null;
+
+  const spinner = extractCodexTitleSpinner(terminalTitle);
+  const totalBudget = getShellNameBudget(sidebarWidth);
+  const prefix = spinner ? `${spinner} ` : "";
+  const availableBudget = Math.max(
+    1,
+    totalBudget - measureDisplayWidth(prefix)
+  );
+  const truncatedSummary = truncateDisplayWidth(summary, availableBudget);
+  const combined = `${prefix}${truncatedSummary}`.trim();
+  return combined || null;
+}
+
+export function extractCodexTitleSpinner(
+  title: string | null | undefined
+): string | null {
+  const normalized = normalizeFirstMessagePreview(title);
+  if (!normalized) return null;
+  const match = normalized.match(CODEX_TITLE_SPINNER_RE);
+  return match?.[0]?.trim() || null;
 }
 
 export function consumeTypedInputBuffer(
@@ -408,6 +471,20 @@ function matchesSequence(tokens: CommandToken[], sequence: string[]): boolean {
   return sequence.every(
     (part, index) => normalizeCommandToken(tokens[index].value) === part
   );
+}
+
+function looksLikeShellCommandMessage(message: string): boolean {
+  if (
+    message.startsWith("./") ||
+    message.startsWith("../") ||
+    /^[a-zA-Z]:[\\/]/.test(message)
+  ) {
+    return true;
+  }
+
+  const firstToken = tokenizeCommandTokens(message)[0]?.value;
+  if (!firstToken) return false;
+  return COMMON_SHELL_COMMANDS.has(normalizeCommandToken(firstToken));
 }
 
 function firstNonFlagTokenIndex(
@@ -488,15 +565,14 @@ function firstCodexPositionalIndex(
 
 function buildDetectedAgentLaunchFromIndex(
   tokens: CommandToken[],
-  targetIndex: number | null,
-  currentCwd: string | null
+  targetIndex: number | null
 ): DetectedAgentLaunch | null {
   if (targetIndex == null) return null;
   const launch = agentLaunchForToken(tokens[targetIndex]?.value);
   if (!launch) return null;
 
   if (launch.kind === "codex") {
-    return buildDetectedCodexLaunch(tokens, targetIndex, currentCwd);
+    return buildDetectedCodexLaunch(tokens, targetIndex);
   }
   return buildDetectedGenericAgentLaunch(tokens, targetIndex, launch);
 }
@@ -509,91 +585,60 @@ function buildDetectedGenericAgentLaunch(
   const commandPrefix = tokens
     .slice(0, targetIndex + 1)
     .map((token) => token.raw);
-  const launchArgs = stripResumeArgs(
-    tokens.slice(targetIndex + 1).map((token) => token.raw),
-    launch.resumeArgs
-  );
-  const restoreFallbackCommand = joinCommandTokens([
-    ...commandPrefix,
-    ...launchArgs,
-    ...launch.resumeArgs,
-  ]);
-  const newSessionCommand = joinCommandTokens([
-    ...commandPrefix,
-    ...launchArgs,
-  ]);
+  const launchArgs = tokens.slice(targetIndex + 1).map((token) => token.raw);
 
-  return {
-    kind: launch.kind,
-    label: launch.label,
-    restoreCapability: launch.restoreCapability,
-    restoreCommandPrefix: null,
-    restoreCommandSuffix: null,
-    restoreFallbackCommand,
-    newSessionCommand,
-    explicitRestoreTarget: null,
-    resolveStrategy: null,
-    launchCwd: null,
-  };
+  switch (launch.kind) {
+    case "claude":
+      return buildDetectedClaudeLaunch(commandPrefix, launch.label, launchArgs);
+    case "gemini":
+      return buildDetectedGeminiLaunch(commandPrefix, launch.label, launchArgs);
+    case "opencode":
+      return buildDetectedOpenCodeLaunch(commandPrefix, launch.label, launchArgs);
+    default:
+      return null;
+  }
 }
 
 function buildDetectedCodexLaunch(
   tokens: CommandToken[],
-  targetIndex: number,
-  currentCwd: string | null
+  targetIndex: number
 ): DetectedAgentLaunch | null {
   const commandPrefixTokens = tokens
     .slice(0, targetIndex + 1)
     .map((token) => token.raw);
   const launchArgs = tokens.slice(targetIndex + 1);
-  const plan = analyzeCodexLaunch(launchArgs, currentCwd);
+  const plan = analyzeCodexLaunch(launchArgs);
   if (!plan) return null;
 
-  const template = buildExactRestoreTemplate(
-    commandPrefixTokens,
-    plan.restoreCommandPrefix,
-    plan.restoreCommandSuffix
-  );
   return {
     kind: "codex",
     label: "Codex",
-    restoreCapability: plan.restoreCapability,
-    restoreCommandPrefix: template.prefix,
-    restoreCommandSuffix: template.suffix,
-    restoreFallbackCommand: prefixCodexCommand(
+    resumeEntryCommand: prefixCodexCommand(
       commandPrefixTokens,
-      plan.restoreFallbackCommand
+      plan.resumeEntryCommand
     ),
     newSessionCommand: prefixCodexCommand(
       commandPrefixTokens,
       plan.newSessionCommand
     ),
-    explicitRestoreTarget: plan.explicitRestoreTarget,
-    resolveStrategy: plan.resolveStrategy,
-    launchCwd: plan.launchCwd,
   };
 }
 
-function analyzeCodexLaunch(
-  launchArgs: CommandToken[],
-  currentCwd: string | null
-): CodexLaunchPlan | null {
+function analyzeCodexLaunch(launchArgs: CommandToken[]): {
+  resumeEntryCommand: string | null;
+  newSessionCommand: string | null;
+} | null {
   const firstPositional = firstCodexPositionalIndex(launchArgs, 0);
   if (firstPositional == null) {
-    return buildCodexNewThreadPlan(
-      collectCodexOptionsUntilPositional(launchArgs),
-      resolveLaunchCwd(extractCodexCwd(launchArgs), currentCwd)
+    return buildCodexPlanFromRuntimeOptions(
+      collectCodexOptionsUntilPositional(launchArgs)
     );
   }
 
   const subcommand = normalizeCommandToken(launchArgs[firstPositional]?.value ?? "");
   if (!CODEX_SUBCOMMANDS.has(subcommand)) {
-    return buildCodexNewThreadPlan(
-      collectCodexOptionsUntilPositional(launchArgs),
-      resolveLaunchCwd(
-        extractCodexCwd(launchArgs.slice(0, firstPositional)),
-        currentCwd
-      )
+    return buildCodexPlanFromRuntimeOptions(
+      collectCodexOptionsUntilPositional(launchArgs)
     );
   }
 
@@ -604,127 +649,37 @@ function analyzeCodexLaunch(
   const globalOptionTokens = launchArgs.slice(0, firstPositional);
   const globalOptions = collectCodexOptionsUntilPositional(globalOptionTokens);
   const subcommandArgs = launchArgs.slice(firstPositional + 1);
-  const launchCwd = resolveLaunchCwd(
-    extractCodexCwd([...globalOptionTokens, ...subcommandArgs]),
-    currentCwd
-  );
 
   if (subcommand === "resume") {
-    return buildCodexResumePlan(globalOptions, subcommandArgs, launchCwd);
+    return buildCodexPlanFromRuntimeOptions(
+      mergeCodexRuntimeOptions(globalOptions, collectCodexResumeRuntimeOptions(subcommandArgs))
+    );
   }
 
   if (subcommand === "fork") {
-    return buildCodexForkPlan(globalOptions, subcommandArgs, launchCwd);
+    return buildCodexPlanFromRuntimeOptions(
+      mergeCodexRuntimeOptions(globalOptions, collectCodexForkRuntimeOptions(subcommandArgs))
+    );
   }
 
   return null;
 }
 
-function buildCodexNewThreadPlan(
-  globalOptions: string[],
-  launchCwd: string | null
-): CodexLaunchPlan {
-  return {
-    restoreCapability: "exact",
-    restoreCommandPrefix: joinCommandTokens([...globalOptions, "resume"]),
-    restoreCommandSuffix: null,
-    restoreFallbackCommand: joinCommandTokens([
-      ...globalOptions,
-      "resume",
-      "--last",
-    ]),
-    newSessionCommand: joinCommandTokens(globalOptions),
-    explicitRestoreTarget: null,
-    resolveStrategy: "codex_new_thread",
-    launchCwd,
-  };
-}
-
-function buildCodexResumePlan(
-  globalOptions: string[],
-  subcommandArgs: CommandToken[],
-  launchCwd: string | null
-): CodexLaunchPlan | null {
-  const analysis = analyzeCodexResumeInvocation(subcommandArgs);
-  if (analysis.explicitRestoreTarget) {
-    return {
-      restoreCapability: "exact",
-      restoreCommandPrefix: joinCommandTokens([...globalOptions, "resume"]),
-      restoreCommandSuffix: joinCommandTokens(analysis.runtimeOptions),
-      restoreFallbackCommand: joinCommandTokens([
-        ...globalOptions,
-        "resume",
-        analysis.explicitRestoreTarget.value,
-        ...analysis.runtimeOptions,
-      ]),
-      newSessionCommand: joinCommandTokens([
-        ...globalOptions,
-        ...analysis.runtimeOptions,
-      ]),
-      explicitRestoreTarget: analysis.explicitRestoreTarget,
-      resolveStrategy: null,
-      launchCwd,
-    };
-  }
-
-  if (!analysis.hasLast) {
-    return null;
-  }
-
-  return {
-    restoreCapability: "exact",
-    restoreCommandPrefix: joinCommandTokens([...globalOptions, "resume"]),
-    restoreCommandSuffix: joinCommandTokens(analysis.runtimeOptions),
-    restoreFallbackCommand: joinCommandTokens([
-      ...globalOptions,
-      "resume",
-      "--last",
-      ...analysis.runtimeOptions,
-    ]),
-    newSessionCommand: joinCommandTokens([
-      ...globalOptions,
-      ...analysis.runtimeOptions,
-    ]),
-    explicitRestoreTarget: null,
-    resolveStrategy: "codex_latest_cwd",
-    launchCwd,
-  };
-}
-
-function buildCodexForkPlan(
-  globalOptions: string[],
-  subcommandArgs: CommandToken[],
-  launchCwd: string | null
-): CodexLaunchPlan {
-  const runtimeOptions = collectCodexForkRuntimeOptions(subcommandArgs);
-  return {
-    restoreCapability: "exact",
-    restoreCommandPrefix: joinCommandTokens([...globalOptions, "resume"]),
-    restoreCommandSuffix: joinCommandTokens(runtimeOptions),
-    restoreFallbackCommand: joinCommandTokens([
-      ...globalOptions,
-      "resume",
-      "--last",
-      ...runtimeOptions,
-    ]),
-    newSessionCommand: joinCommandTokens([...globalOptions, ...runtimeOptions]),
-    explicitRestoreTarget: null,
-    resolveStrategy: "codex_new_thread",
-    launchCwd,
-  };
-}
-
-function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
-  explicitRestoreTarget: RestoreTarget | null;
-  hasLast: boolean;
-  runtimeOptions: string[];
+function buildCodexPlanFromRuntimeOptions(globalOptions: string[]): {
+  resumeEntryCommand: string | null;
+  newSessionCommand: string | null;
 } {
+  return {
+    resumeEntryCommand: joinCommandTokens([...globalOptions, "resume"]),
+    newSessionCommand: joinCommandTokens(globalOptions),
+  };
+}
+
+function collectCodexResumeRuntimeOptions(subcommandArgs: CommandToken[]): string[] {
   const runtimeOptions: string[] = [];
   let pendingValueOption: string | null = null;
-  let explicitRestoreTarget: RestoreTarget | null = null;
   let waitingForDoubleDashTarget = false;
   let targetCaptured = false;
-  let hasLast = false;
 
   for (const token of subcommandArgs) {
     if (pendingValueOption) {
@@ -740,10 +695,6 @@ function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
     }
 
     if (waitingForDoubleDashTarget) {
-      explicitRestoreTarget = {
-        kind: "thread_id",
-        value: token.value,
-      };
       targetCaptured = true;
       waitingForDoubleDashTarget = false;
       continue;
@@ -756,10 +707,6 @@ function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
 
     const option = codexOptionKey(token.value);
     if (option) {
-      if (option === "--last") {
-        hasLast = true;
-        continue;
-      }
       if (CODEX_RESUME_SELECTION_OPTIONS.has(option)) {
         continue;
       }
@@ -773,10 +720,6 @@ function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
     }
 
     if (!targetCaptured) {
-      explicitRestoreTarget = {
-        kind: "thread_id",
-        value: token.value,
-      };
       targetCaptured = true;
       continue;
     }
@@ -784,11 +727,81 @@ function analyzeCodexResumeInvocation(subcommandArgs: CommandToken[]): {
     break;
   }
 
+  return runtimeOptions;
+}
+
+function buildDetectedClaudeLaunch(
+  commandPrefix: string[],
+  label: string,
+  launchArgs: string[]
+): DetectedAgentLaunch {
+  const runtimeArgs = stripArgsWithOptionalValues(launchArgs, new Set([
+    "-c",
+    "--continue",
+    "-r",
+    "--resume",
+    "--from-pr",
+    "--session-id",
+    "--fork-session",
+  ]));
   return {
-    explicitRestoreTarget,
-    hasLast,
-    runtimeOptions,
+    kind: "claude",
+    label,
+    resumeEntryCommand: joinCommandTokens([
+      ...commandPrefix,
+      ...runtimeArgs,
+      "--resume",
+    ]),
+    newSessionCommand: joinCommandTokens([...commandPrefix, ...runtimeArgs]),
   };
+}
+
+function buildDetectedGeminiLaunch(
+  commandPrefix: string[],
+  label: string,
+  launchArgs: string[]
+): DetectedAgentLaunch {
+  const runtimeArgs = stripArgsWithOptionalValues(launchArgs, new Set([
+    "-r",
+    "--resume",
+    "--list-sessions",
+    "--delete-session",
+  ]));
+  return {
+    kind: "gemini",
+    label,
+    resumeEntryCommand: joinCommandTokens([
+      ...commandPrefix,
+      ...runtimeArgs,
+      "--list-sessions",
+    ]),
+    newSessionCommand: joinCommandTokens([...commandPrefix, ...runtimeArgs]),
+  };
+}
+
+function buildDetectedOpenCodeLaunch(
+  commandPrefix: string[],
+  label: string,
+  launchArgs: string[]
+): DetectedAgentLaunch {
+  const runtimeArgs = stripOpenCodeSessionArgs(launchArgs);
+  return {
+    kind: "opencode",
+    label,
+    resumeEntryCommand: joinCommandTokens([
+      ...commandPrefix,
+      "session",
+      "list",
+    ]),
+    newSessionCommand: joinCommandTokens([...commandPrefix, ...runtimeArgs]),
+  };
+}
+
+function mergeCodexRuntimeOptions(
+  globalOptions: string[],
+  runtimeOptions: string[]
+): string[] {
+  return [...globalOptions, ...runtimeOptions];
 }
 
 function agentLaunchForToken(token: string | null): AgentLaunchSpec | null {
@@ -890,6 +903,41 @@ function collectCodexForkRuntimeOptions(tokens: CommandToken[]): string[] {
   return out;
 }
 
+function stripArgsWithOptionalValues(
+  args: string[],
+  removableOptions: Set<string>
+): string[] {
+  const out: string[] = [];
+
+  for (let index = 0; index < args.length; index += 1) {
+    const value = args[index];
+    const normalized = normalizeOptionToken(value);
+    if (normalized && removableOptions.has(normalized)) {
+      if (optionLikelyConsumesValue(normalized, value, args[index + 1])) {
+        index += 1;
+      }
+      continue;
+    }
+    out.push(value);
+  }
+
+  return out;
+}
+
+function stripOpenCodeSessionArgs(args: string[]): string[] {
+  const stripped = stripArgsWithOptionalValues(
+    args,
+    new Set(["--continue", "--session"])
+  );
+  if (
+    normalizeCommandToken(stripped[0] ?? "") === "session" &&
+    normalizeCommandToken(stripped[1] ?? "") === "list"
+  ) {
+    return stripped.slice(2);
+  }
+  return stripped;
+}
+
 function codexOptionKey(token: string): string | null {
   if (token === "--") return null;
 
@@ -909,6 +957,35 @@ function codexOptionKey(token: string): string | null {
   return token;
 }
 
+function normalizeOptionToken(token: string): string | null {
+  if (token === "--") return null;
+  if (token.startsWith("--")) {
+    const eq = token.indexOf("=");
+    return eq >= 0 ? token.slice(0, eq) : token;
+  }
+  return token.startsWith("-") && token !== "-" ? token : null;
+}
+
+function optionLikelyConsumesValue(
+  option: string,
+  rawToken: string,
+  nextToken?: string
+): boolean {
+  if (option.startsWith("--") && rawToken.includes("=")) {
+    return false;
+  }
+  if ((option === "-c" || option === "--continue" || option === "--list-sessions") &&
+      nextToken &&
+      !looksLikeOption(nextToken)) {
+    return false;
+  }
+  return Boolean(nextToken && !looksLikeOption(nextToken));
+}
+
+function looksLikeOption(token: string): boolean {
+  return token === "--" || (token.startsWith("-") && token !== "-");
+}
+
 function isSuspiciousCodexOptionValue(option: string, value: string): boolean {
   if (!CODEX_VALUE_OPTIONS.has(option)) {
     return false;
@@ -921,106 +998,6 @@ function hasInlineCodexOptionValue(token: string, option: string): boolean {
     return token.startsWith(`${option}=`);
   }
   return token.length > option.length;
-}
-
-function extractCodexCwd(tokens: CommandToken[]): string | null {
-  let pendingCwd = false;
-
-  for (const token of tokens) {
-    if (pendingCwd) {
-      return normalizeLaunchCwd(token.value);
-    }
-    if (token.value === "-C" || token.value === "--cd") {
-      pendingCwd = true;
-      continue;
-    }
-    if (token.value.startsWith("--cd=")) {
-      return normalizeLaunchCwd(token.value.slice("--cd=".length));
-    }
-    if (token.value.startsWith("-C") && token.value !== "-C") {
-      return normalizeLaunchCwd(token.value.slice(2));
-    }
-  }
-
-  return null;
-}
-
-function resolveLaunchCwd(
-  launchCwd: string | null,
-  currentCwd: string | null
-): string | null {
-  if (!launchCwd) return currentCwd ?? null;
-  if (isAbsolutePath(launchCwd) || !currentCwd) {
-    return normalizePathString(launchCwd);
-  }
-
-  return normalizePathString(joinRelativePath(currentCwd, launchCwd));
-}
-
-function normalizeLaunchCwd(value: string): string | null {
-  const trimmed = value.trim();
-  return trimmed ? trimmed : null;
-}
-
-function isAbsolutePath(value: string): boolean {
-  return (
-    /^[a-zA-Z]:[\\/]/.test(value) ||
-    value.startsWith("\\\\") ||
-    value.startsWith("/")
-  );
-}
-
-function joinRelativePath(basePath: string, relativePath: string): string {
-  const separator = basePath.includes("\\") ? "\\" : "/";
-  const base = basePath.replace(/[\\/]+$/, "");
-  return `${base}${separator}${relativePath}`;
-}
-
-function normalizePathString(path: string): string {
-  const isWindows = /^[a-zA-Z]:[\\/]/.test(path) || path.startsWith("\\\\");
-  const hasLeadingSlash = !isWindows && path.startsWith("/");
-  const rawSegments = path
-    .replace(/[\\/]+/g, "/")
-    .split("/")
-    .filter((segment, index) => segment.length > 0 || index === 0);
-  const normalizedSegments: string[] = [];
-
-  for (const segment of rawSegments) {
-    if (!segment || segment === ".") continue;
-    if (segment === "..") {
-      if (
-        normalizedSegments.length > 0 &&
-        normalizedSegments[normalizedSegments.length - 1] !== ".."
-      ) {
-        normalizedSegments.pop();
-      } else if (!hasLeadingSlash) {
-        normalizedSegments.push(segment);
-      }
-      continue;
-    }
-    normalizedSegments.push(segment);
-  }
-
-  if (isWindows) {
-    const prefix = normalizedSegments.shift() ?? "";
-    const rest = normalizedSegments.join("\\");
-    return rest ? `${prefix}\\${rest}` : prefix;
-  }
-
-  const joined = normalizedSegments.join("/");
-  return hasLeadingSlash ? `/${joined}` : joined;
-}
-
-function buildExactRestoreTemplate(
-  commandPrefixTokens: string[],
-  restoreCommandPrefix: string | null,
-  restoreCommandSuffix: string | null
-): ExactRestoreTemplate {
-  const prefix = prefixCodexCommand(commandPrefixTokens, restoreCommandPrefix);
-  return {
-    prefix,
-    suffix: restoreCommandSuffix?.trim() || null,
-  };
 }
 
 function prefixCodexCommand(
@@ -1036,71 +1013,6 @@ function prefixCodexCommand(
 function joinCommandTokens(tokens: string[]): string | null {
   const joined = tokens.map((token) => token.trim()).filter(Boolean).join(" ");
   return joined || null;
-}
-
-function sanitizeCodexRestorePrefix(prefix: string): string | null {
-  const tokens = tokenizeCommandTokens(prefix);
-  if (tokens.length === 0) return null;
-
-  const codexIndex = tokens.findIndex(
-    (token) => normalizeCommandToken(token.value) === "codex"
-  );
-  if (codexIndex < 0) {
-    return prefix.trim() || null;
-  }
-
-  const subcommandIndex = firstCodexPositionalIndex(tokens, codexIndex + 1);
-  const subcommand =
-    subcommandIndex == null
-      ? null
-      : normalizeCommandToken(tokens[subcommandIndex]?.value ?? "");
-
-  if (subcommand === "resume") {
-    return joinCommandTokens(tokens.map((token) => token.raw));
-  }
-
-  const repaired = joinCommandTokens([
-    ...tokens.slice(0, codexIndex + 1).map((token) => token.raw),
-    "resume",
-  ]);
-  return repaired;
-}
-
-function joinCommandParts(parts: Array<string | null | undefined>): string | null {
-  const joined = parts.map((part) => part?.trim() ?? "").filter(Boolean).join(" ");
-  return joined || null;
-}
-
-function stripResumeArgs(
-  launchArgs: string[],
-  resumeArgs: readonly string[]
-): string[] {
-  if (resumeArgs.length === 0) return launchArgs;
-
-  const out: string[] = [];
-  for (let index = 0; index < launchArgs.length; ) {
-    if (matchesArgSequence(launchArgs, resumeArgs, index)) {
-      index += resumeArgs.length;
-      continue;
-    }
-    out.push(launchArgs[index]);
-    index += 1;
-  }
-  return out;
-}
-
-function matchesArgSequence(
-  tokens: string[],
-  sequence: readonly string[],
-  index: number
-): boolean {
-  if (index + sequence.length > tokens.length) return false;
-  for (let offset = 0; offset < sequence.length; offset += 1) {
-    if ((tokens[index + offset]?.trim() ?? "") !== sequence[offset]) {
-      return false;
-    }
-  }
-  return true;
 }
 
 function getShellNameBudget(sidebarWidth: number): number {
@@ -1151,6 +1063,10 @@ function measureCharWidth(char: string): number {
     return 2;
   }
   return 1;
+}
+
+function containsCjk(value: string): boolean {
+  return /[\u3400-\u9fff\uF900-\uFAFF]/u.test(value);
 }
 
 function stripInputEscapeSequences(data: string): string {

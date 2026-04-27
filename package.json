@@ -1,10 +1,12 @@
 {
   "name": "sideshell",
   "private": true,
-  "version": "0.6.0",
+  "version": "0.10.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "icons:sync": "node scripts/sync-icons.mjs",
+    "prebuild": "pnpm run icons:sync",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "tauri": "tauri",

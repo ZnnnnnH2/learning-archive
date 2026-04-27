@@ -1,14 +1,12 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { WebglAddon } from "@xterm/addon-webgl";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import {
-  buildAgentRestoreCommand,
   consumeTypedInputBuffer,
   detectAgentLaunchFromCommand,
-  normalizeFirstMessagePreview,
+  summarizeAgentTaskFromInput,
 } from "../autoName";
 import {
   createBellNotification,
@@ -23,7 +21,6 @@ import {
   pathExists,
   type PtyDataEvent,
   ptyResize,
-  resolveAgentRestoreTarget,
   ptySpawn,
   ptyWrite,
 } from "../ipc";
@@ -31,6 +28,7 @@ import {
   buildPtySpawnOptions,
   DEFAULT_TERMINAL_FONT_FAMILY,
 } from "../terminalConfig";
+import { translate } from "../i18n";
 import { dismissShellAlert, raiseShellAlert } from "../shellAlerts";
 import { base64ToBytes, stringToBase64 } from "../utils";
 import { useAppStore } from "../store";
@@ -65,7 +63,10 @@ const THEME = {
   brightWhite: "#ffffff",
 };
 
-export function TerminalView({ shell, active }: Props) {
+const TERMINAL_SCROLLBACK = 3000;
+const TERMINAL_WRITE_FRAME_BYTES = 256 * 1024;
+
+function TerminalViewComponent({ shell, active }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -74,36 +75,30 @@ export function TerminalView({ shell, active }: Props) {
   const attachCompleteRef = useRef(false);
   const pendingDataRef = useRef<PtyDataEvent[]>([]);
   const pendingResumeCommandRef = useRef<string | null>(null);
-  const pendingCommandKindRef = useRef<"restore" | "startup" | null>(null);
+  const pendingCommandKindRef = useRef<"startup" | null>(null);
   const promptReadyRef = useRef(false);
   const resumeSentRef = useRef(false);
   const resumeFallbackTimerRef = useRef<number | null>(null);
-  const restoreResolveTimerRef = useRef<number | null>(null);
+  const writeFrameRef = useRef<number | null>(null);
+  const queuedWriteChunksRef = useRef<Uint8Array[]>([]);
+  const queuedWriteBytesRef = useRef(0);
   const disposedRef = useRef(false);
   const typedInputRef = useRef("");
   const terminalFontFamily = useAppStore(
     (s) => s.terminalSettings.fontFamily
   );
+  const locale = useAppStore((s) => s.terminalSettings.locale);
 
   // Store getters (avoid re-subscribing on every change)
   const setShellSession = useAppStore((s) => s.setShellSession);
   const setShellStatus = useAppStore((s) => s.setShellStatus);
   const setShellAttention = useAppStore((s) => s.setShellAttention);
   const startShellAgentSession = useAppStore((s) => s.startShellAgentSession);
-  const setShellRestoreTarget = useAppStore((s) => s.setShellRestoreTarget);
-  const markShellRestoreResolveFailed = useAppStore(
-    (s) => s.markShellRestoreResolveFailed
-  );
-  const clearShellRestorePending = useAppStore(
-    (s) => s.clearShellRestorePending
-  );
   const clearShellStartupCommand = useAppStore(
     (s) => s.clearShellStartupCommand
   );
   const setShellTerminalTitle = useAppStore((s) => s.setShellTerminalTitle);
-  const setShellFirstMessagePreview = useAppStore(
-    (s) => s.setShellFirstMessagePreview
-  );
+  const setShellTaskSummary = useAppStore((s) => s.setShellTaskSummary);
   const setShellCwd = useAppStore((s) => s.setShellCwd);
   const setShellSize = useAppStore((s) => s.setShellSize);
   const setShellExit = useAppStore((s) => s.setShellExit);
@@ -115,33 +110,34 @@ export function TerminalView({ shell, active }: Props) {
     }
   };
 
-  const clearRestoreResolveTimer = () => {
-    if (restoreResolveTimerRef.current !== null) {
-      window.clearTimeout(restoreResolveTimerRef.current);
-      restoreResolveTimerRef.current = null;
+  const clearQueuedTerminalWrites = () => {
+    if (writeFrameRef.current !== null) {
+      window.cancelAnimationFrame(writeFrameRef.current);
+      writeFrameRef.current = null;
     }
+    queuedWriteChunksRef.current = [];
+    queuedWriteBytesRef.current = 0;
+  };
+
+  const trackAgentLaunch = (line: string) => {
+    const currentShell = useAppStore.getState().shells[shell.id];
+    const launch = detectAgentLaunchFromCommand(
+      line,
+      currentShell?.cwd ?? shell.cwd
+    );
+    if (!launch) return false;
+    startShellAgentSession(shell.id, launch);
+    return true;
   };
 
   const updatePendingResumeCommand = (
     currentShell: Shell | null | undefined
   ): string | null => {
     let command: string | null = null;
-    let kind: "restore" | "startup" | null = null;
+    let kind: "startup" | null = null;
     if (currentShell?.startupCommand) {
       command = currentShell.startupCommand;
       kind = "startup";
-    } else if (
-      currentShell?.restorePending &&
-      !currentShell.restoreResolvePending
-    ) {
-      command = buildAgentRestoreCommand({
-        kind: currentShell.agentKind,
-        restoreCommandPrefix: currentShell.restoreCommandPrefix,
-        restoreCommandSuffix: currentShell.restoreCommandSuffix,
-        restoreFallbackCommand: currentShell.restoreFallbackCommand,
-        restoreTarget: currentShell.restoreTarget,
-      });
-      kind = command ? "restore" : null;
     }
     pendingResumeCommandRef.current = command;
     pendingCommandKindRef.current = kind;
@@ -160,14 +156,13 @@ export function TerminalView({ shell, active }: Props) {
     }
 
     const commandKind = pendingCommandKindRef.current;
+    trackAgentLaunch(command);
     resumeSentRef.current = true;
     pendingResumeCommandRef.current = null;
     pendingCommandKindRef.current = null;
     clearResumeFallbackTimer();
     if (commandKind === "startup") {
       clearShellStartupCommand(shell.id);
-    } else {
-      clearShellRestorePending(shell.id);
     }
     setShellStatus(shell.id, "running");
     ptyWrite(sid, stringToBase64(`${command}\r`)).catch((error) => {
@@ -192,46 +187,6 @@ export function TerminalView({ shell, active }: Props) {
     }, 900);
   };
 
-  const resolveRestoreTarget = async (
-    currentShell: Shell,
-    markFailure: boolean
-  ): Promise<boolean> => {
-    if (
-      !currentShell.agentKind ||
-      !currentShell.restoreResolvePending ||
-      !currentShell.restoreResolveStrategy
-    ) {
-      return false;
-    }
-
-    try {
-      const result = await resolveAgentRestoreTarget({
-        agentKind: currentShell.agentKind,
-        strategy: currentShell.restoreResolveStrategy,
-        cwd: currentShell.restoreLaunchCwd ?? currentShell.cwd,
-        launchStartedAt: currentShell.restoreLaunchStartedAt,
-      });
-      if (result?.target) {
-        setShellRestoreTarget(
-          currentShell.id,
-          result.target,
-          currentShell.restoreLaunchStartedAt
-        );
-        return true;
-      }
-    } catch (error) {
-      console.error("resolve restore target failed", error);
-    }
-
-    if (markFailure) {
-      markShellRestoreResolveFailed(
-        currentShell.id,
-        currentShell.restoreLaunchStartedAt
-      );
-    }
-    return false;
-  };
-
   // Mount xterm once per shell id
   useLayoutEffect(() => {
     if (!hostRef.current) return;
@@ -244,7 +199,7 @@ export function TerminalView({ shell, active }: Props) {
     promptReadyRef.current = false;
     resumeSentRef.current = false;
     clearResumeFallbackTimer();
-    clearRestoreResolveTimer();
+    clearQueuedTerminalWrites();
     typedInputRef.current = "";
 
     const term = new Terminal({
@@ -257,7 +212,7 @@ export function TerminalView({ shell, active }: Props) {
       cursorWidth: 2,
       theme: THEME,
       allowProposedApi: true,
-      scrollback: 10000,
+      scrollback: TERMINAL_SCROLLBACK,
       convertEol: false,
       macOptionIsMeta: true,
       rightClickSelectsWord: true,
@@ -268,13 +223,6 @@ export function TerminalView({ shell, active }: Props) {
     term.loadAddon(new WebLinksAddon());
     term.open(hostRef.current);
     try {
-      const webgl = new WebglAddon();
-      webgl.onContextLoss(() => webgl.dispose());
-      term.loadAddon(webgl);
-    } catch (e) {
-      console.warn("WebGL renderer unavailable, falling back:", e);
-    }
-    try {
       fit.fit();
     } catch {}
 
@@ -284,27 +232,17 @@ export function TerminalView({ shell, active }: Props) {
     const markAttention = () => {
       raiseShellAlert(shell.id, createBellNotification());
     };
-    const applyAgentLaunch = (line: string) => {
+    const captureTaskSummary = (line: string) => {
       const currentShell = useAppStore.getState().shells[shell.id];
-      const launch = detectAgentLaunchFromCommand(
-        line,
-        currentShell?.cwd ?? shell.cwd
-      );
-      if (!launch) return false;
-      startShellAgentSession(shell.id, launch, Date.now());
-      return true;
-    };
-    const captureFirstMessagePreview = (line: string) => {
-      const preview = normalizeFirstMessagePreview(line);
-      const currentShell = useAppStore.getState().shells[shell.id];
+      const summary = summarizeAgentTaskFromInput(line);
       if (
-        !preview ||
+        !summary ||
         !currentShell?.agentLabel ||
-        currentShell.firstMessagePreview
+        currentShell.taskSummary === summary
       ) {
         return;
       }
-      setShellFirstMessagePreview(shell.id, preview);
+      setShellTaskSummary(shell.id, summary);
     };
 
     // OSC 7 — cwd updates from shell
@@ -359,10 +297,58 @@ export function TerminalView({ shell, active }: Props) {
     let unlistenData: UnlistenFn | null = null;
     let unlistenExit: UnlistenFn | null = null;
 
+    const flushTerminalWrites = () => {
+      writeFrameRef.current = null;
+      if (disposedRef.current || !termRef.current) {
+        clearQueuedTerminalWrites();
+        return;
+      }
+
+      const chunks = queuedWriteChunksRef.current;
+      if (chunks.length === 0) {
+        queuedWriteBytesRef.current = 0;
+        return;
+      }
+
+      let bytesToWrite: Uint8Array;
+      if (chunks.length === 1) {
+        bytesToWrite = chunks.shift()!;
+        queuedWriteBytesRef.current = 0;
+      } else {
+        const totalBytes = queuedWriteBytesRef.current;
+        bytesToWrite = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytesToWrite.set(chunk, offset);
+          offset += chunk.length;
+        }
+        queuedWriteChunksRef.current = [];
+        queuedWriteBytesRef.current = 0;
+      }
+
+      term.write(bytesToWrite);
+    };
+
+    const scheduleTerminalWrite = (bytes: Uint8Array) => {
+      if (bytes.length === 0) return;
+      queuedWriteChunksRef.current.push(bytes);
+      queuedWriteBytesRef.current += bytes.length;
+      if (queuedWriteBytesRef.current >= TERMINAL_WRITE_FRAME_BYTES) {
+        if (writeFrameRef.current !== null) {
+          window.cancelAnimationFrame(writeFrameRef.current);
+          writeFrameRef.current = null;
+        }
+        flushTerminalWrites();
+        return;
+      }
+      if (writeFrameRef.current === null) {
+        writeFrameRef.current = window.requestAnimationFrame(flushTerminalWrites);
+      }
+    };
+
     const writeChunk = (e: PtyDataEvent) => {
       attachedSeqRef.current = e.seq;
-      const bytes = base64ToBytes(e.data);
-      term.write(bytes);
+      scheduleTerminalWrite(base64ToBytes(e.data));
     };
 
     const init = async () => {
@@ -415,21 +401,14 @@ export function TerminalView({ shell, active }: Props) {
         ptyResize(sid, rows, cols).catch(() => {});
       }
       setShellSize(shell.id, cols, rows);
-
-      let currentShell = useAppStore.getState().shells[shell.id];
-      if (currentShell?.restoreResolvePending) {
-        await resolveRestoreTarget(currentShell, true);
-        currentShell = useAppStore.getState().shells[shell.id];
-      }
-      updatePendingResumeCommand(currentShell);
+      updatePendingResumeCommand(useAppStore.getState().shells[shell.id]);
 
       const snapshot = await ptyAttach(sid);
       if (disposedRef.current || sessionIdRef.current !== sid) return;
 
       attachedSeqRef.current = snapshot.lastSeq;
       if (snapshot.data) {
-        const bytes = base64ToBytes(snapshot.data);
-        term.write(bytes);
+        scheduleTerminalWrite(base64ToBytes(snapshot.data));
       }
 
       attachCompleteRef.current = true;
@@ -447,7 +426,7 @@ export function TerminalView({ shell, active }: Props) {
     init().catch((e) => {
       const message = e instanceof Error ? e.message : String(e);
       setShellStatus(shell.id, "error");
-      term.writeln("[SideShell] Failed to start shell.");
+      term.writeln(translate(locale, "terminal.startFailed"));
       term.writeln(message);
       console.error("init terminal failed", e);
     });
@@ -458,8 +437,8 @@ export function TerminalView({ shell, active }: Props) {
       const consumed = consumeTypedInputBuffer(typedInputRef.current, data);
       typedInputRef.current = consumed.line;
       for (const line of consumed.submittedLines) {
-        if (applyAgentLaunch(line)) continue;
-        captureFirstMessagePreview(line);
+        if (trackAgentLaunch(line)) continue;
+        captureTaskSummary(line);
       }
       ptyWrite(sid, stringToBase64(data)).catch(() => {});
     });
@@ -490,7 +469,7 @@ export function TerminalView({ shell, active }: Props) {
       unlistenData?.();
       unlistenExit?.();
       clearResumeFallbackTimer();
-      clearRestoreResolveTimer();
+      clearQueuedTerminalWrites();
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
@@ -515,57 +494,7 @@ export function TerminalView({ shell, active }: Props) {
     scheduleResumeFallback();
   }, [
     shell.id,
-    shell.agentKind,
-    shell.restorePending,
-    shell.restoreResolvePending,
-    shell.restoreCommandPrefix,
-    shell.restoreCommandSuffix,
-    shell.restoreFallbackCommand,
     shell.startupCommand,
-    shell.restoreTarget?.kind,
-    shell.restoreTarget?.value,
-  ]);
-
-  useEffect(() => {
-    if (!shell.restoreResolvePending || shell.restorePending) {
-      clearRestoreResolveTimer();
-      return;
-    }
-
-    let cancelled = false;
-
-    const run = async () => {
-      const currentShell = useAppStore.getState().shells[shell.id];
-      if (!currentShell?.restoreResolvePending || currentShell.restorePending) {
-        clearRestoreResolveTimer();
-        return;
-      }
-
-      const resolved = await resolveRestoreTarget(currentShell, false);
-      if (cancelled) return;
-      if (resolved) return;
-
-      clearRestoreResolveTimer();
-      restoreResolveTimerRef.current = window.setTimeout(() => {
-        restoreResolveTimerRef.current = null;
-        void run();
-      }, 1500);
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-      clearRestoreResolveTimer();
-    };
-  }, [
-    shell.id,
-    shell.restorePending,
-    shell.restoreResolvePending,
-    shell.restoreResolveStrategy,
-    shell.restoreLaunchStartedAt,
-    shell.restoreLaunchCwd,
-    shell.cwd,
   ]);
 
   // Re-fit + focus when becoming active
@@ -600,3 +529,5 @@ export function TerminalView({ shell, active }: Props) {
     </div>
   );
 }
+
+export const TerminalView = memo(TerminalViewComponent);

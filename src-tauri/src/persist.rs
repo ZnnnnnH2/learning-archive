@@ -13,39 +13,43 @@ pub struct RestoreTargetRecord {
 pub struct ShellRecord {
     pub id: String,
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name_mode: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_label: Option<String>,
     #[serde(default)]
-    pub restore_capability: Option<String>,
-    #[serde(default)]
-    pub restore_command_prefix: Option<String>,
-    #[serde(default)]
-    pub restore_command_suffix: Option<String>,
-    #[serde(default)]
-    pub restore_fallback_command: Option<String>,
+    pub resume_entry_command: Option<String>,
     #[serde(default)]
     pub new_session_command: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_capability: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_command_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_command_suffix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_fallback_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_target: Option<RestoreTargetRecord>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_resolve_pending: Option<bool>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_resolve_strategy: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_launch_started_at: Option<i64>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub restore_launch_cwd: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub resume_command: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub first_message_preview: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub terminal_title: Option<String>,
     pub cwd: String,
 }
@@ -63,14 +67,20 @@ pub struct ProjectRecord {
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalSettingsRecord {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell_executable: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_family: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub extra_env_text: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub alert_popup_duration_seconds: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_use_self_summary_title: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shortcut_keymap: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

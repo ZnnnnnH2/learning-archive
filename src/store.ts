@@ -1,9 +1,11 @@
 import { create } from "zustand";
 import {
+  buildCodexSummaryShellName,
+  buildDefaultAgentResumeEntryCommand,
   buildDefaultAgentNewSessionCommand,
   buildAgentShellName,
   buildDefaultShellName,
-  sanitizeAgentRestoreCommandPrefix,
+  detectAgentLaunchFromCommand,
   type DetectedAgentLaunch,
   normalizeShellNameMode,
 } from "./autoName";
@@ -11,21 +13,25 @@ import {
   DEFAULT_TERMINAL_SETTINGS,
   normalizeTerminalSettings,
 } from "./terminalConfig";
+import { areShortcutKeymapsEqual } from "./shortcuts";
+import { AGENT_KINDS } from "./types";
 import type {
   AgentKind,
   LazyShellStartMode,
-  PersistedRestoreTarget,
   PersistedState,
   Project,
-  RestoreCapability,
-  RestoreResolveStrategy,
-  RestoreTarget,
+  RestoreDefaultsByAgent,
   Shell,
   ShellStatus,
   TerminalSettings,
 } from "./types";
 import { basename, newId } from "./utils";
 import { ptyKill, savePersistedState } from "./ipc";
+
+const PERSIST_DEBOUNCE_MS = 250;
+
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistResolvers: Array<() => void> = [];
 
 interface AppState {
   projects: Record<string, Project>;
@@ -48,23 +54,12 @@ interface AppState {
   renameShell: (id: string, name: string) => void;
   startShellAgentSession: (
     id: string,
-    launch: DetectedAgentLaunch,
-    launchedAt: number
+    launch: DetectedAgentLaunch
   ) => void;
-  setShellRestoreTarget: (
-    id: string,
-    target: RestoreTarget,
-    expectedLaunchStartedAt?: number | null
-  ) => void;
-  markShellRestoreResolveFailed: (
-    id: string,
-    expectedLaunchStartedAt?: number | null
-  ) => void;
-  clearShellRestorePending: (id: string) => void;
   clearShellStartupCommand: (id: string) => void;
   startLazyShell: (id: string, mode: LazyShellStartMode) => void;
   setShellTerminalTitle: (id: string, title: string) => void;
-  setShellFirstMessagePreview: (id: string, message: string) => void;
+  setShellTaskSummary: (id: string, message: string) => void;
   useAutoShellName: (id: string) => void;
   cloneShell: (id: string) => Shell | null;
   setShellStatus: (id: string, status: ShellStatus) => void;
@@ -79,6 +74,14 @@ interface AppState {
   setSidebarWidth: (w: number) => void;
   toggleSidebar: () => void;
   setTerminalSettings: (settings: TerminalSettings) => void;
+  getAgentRestoreDefault: (
+    agentKind: AgentKind
+  ) => LazyShellStartMode | undefined;
+  setAgentRestoreDefault: (
+    agentKind: AgentKind,
+    mode: LazyShellStartMode
+  ) => void;
+  clearAgentRestoreDefault: (agentKind: AgentKind) => void;
 
   hydrateFrom: (state: PersistedState) => void;
   persist: () => Promise<void>;
@@ -182,20 +185,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       nameMode: "auto",
       agentKind: null,
       agentLabel: null,
-      restoreCapability: null,
-      restoreCommandPrefix: null,
-      restoreCommandSuffix: null,
-      restoreFallbackCommand: null,
+      resumeEntryCommand: null,
       newSessionCommand: null,
       startupCommand: null,
-      restoreTarget: null,
-      restorePending: false,
-      restoreResolvePending: false,
-      restoreResolveStrategy: null,
-      restoreLaunchStartedAt: null,
-      restoreLaunchCwd: null,
       lazyStart: false,
-      firstMessagePreview: null,
+      taskSummary: null,
       terminalTitle: null,
       cwd,
       initialCwd: cwd,
@@ -266,11 +260,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().persist();
   },
 
-  startShellAgentSession: (id, launch, launchedAt) => {
+  startShellAgentSession: (id, launch) => {
     const nextLabel = launch.label.trim();
     if (!nextLabel) return;
-    const restoreTarget = normalizeRestoreTarget(launch.explicitRestoreTarget);
-    const resolvePending = Boolean(launch.resolveStrategy && !restoreTarget);
 
     set((s) => {
       const sh = s.shells[id];
@@ -280,31 +272,18 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...sh,
           agentKind: launch.kind,
           agentLabel: nextLabel,
-          restoreCapability: launch.restoreCapability,
-          restoreCommandPrefix: sanitizeAgentRestoreCommandPrefix(
-            launch.kind,
-            normalizeNullableString(launch.restoreCommandPrefix)
-          ),
-          restoreCommandSuffix: normalizeNullableString(
-            launch.restoreCommandSuffix
-          ),
-          restoreFallbackCommand: normalizeNullableString(
-            launch.restoreFallbackCommand
-          ),
+          resumeEntryCommand:
+            normalizeNullableString(launch.resumeEntryCommand) ??
+            buildDefaultAgentResumeEntryCommand(launch.kind),
           newSessionCommand:
             normalizeNullableString(launch.newSessionCommand) ??
             buildDefaultAgentNewSessionCommand(launch.kind),
           startupCommand: null,
-          restoreTarget,
-          restorePending: false,
-          restoreResolvePending: resolvePending,
-          restoreResolveStrategy: launch.resolveStrategy,
-          restoreLaunchStartedAt: resolvePending ? launchedAt : null,
-          restoreLaunchCwd: normalizeNullableString(launch.launchCwd),
-          firstMessagePreview: null,
+          taskSummary: null,
           terminalTitle: null,
         },
-        s.sidebarWidth
+        s.sidebarWidth,
+        s.terminalSettings.codexUseSelfSummaryTitle
       );
       if (
         areShellNameFieldsEqual(sh, nextShell) &&
@@ -323,68 +302,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().persist();
   },
 
-  setShellRestoreTarget: (id, target, expectedLaunchStartedAt) => {
-    const nextTarget = normalizeRestoreTarget(target);
-    if (!nextTarget) return;
-
-    set((s) => {
-      const sh = s.shells[id];
-      if (!sh) return {};
-      if (
-        expectedLaunchStartedAt != null &&
-        sh.restoreLaunchStartedAt !== expectedLaunchStartedAt
-      ) {
-        return {};
-      }
-      const nextShell: Shell = {
-        ...sh,
-        restoreTarget: nextTarget,
-        restoreResolvePending: false,
-      };
-      if (areShellRestoreFieldsEqual(sh, nextShell)) return {};
-      return {
-        shells: {
-          ...s.shells,
-          [id]: nextShell,
-        },
-      };
-    });
-    get().persist();
-  },
-
-  markShellRestoreResolveFailed: (id, expectedLaunchStartedAt) => {
-    set((s) => {
-      const sh = s.shells[id];
-      if (!sh || !sh.restoreResolvePending) return {};
-      if (
-        expectedLaunchStartedAt != null &&
-        sh.restoreLaunchStartedAt !== expectedLaunchStartedAt
-      ) {
-        return {};
-      }
-      return {
-        shells: {
-          ...s.shells,
-          [id]: { ...sh, restoreResolvePending: false },
-        },
-      };
-    });
-    get().persist();
-  },
-
-  clearShellRestorePending: (id) => {
-    set((s) => {
-      const sh = s.shells[id];
-      if (!sh || !sh.restorePending) return {};
-      return {
-        shells: {
-          ...s.shells,
-          [id]: { ...sh, restorePending: false },
-        },
-      };
-    });
-  },
-
   clearShellStartupCommand: (id) => {
     set((s) => {
       const sh = s.shells[id];
@@ -396,6 +313,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    get().persist();
   },
 
   startLazyShell: (id, mode) => {
@@ -403,12 +321,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sh = s.shells[id];
       if (!sh) return {};
 
-      const hasRestorePath = Boolean(
-        sh.restorePending ||
-          sh.restoreResolvePending ||
-          sh.restoreTarget ||
-          sh.restoreFallbackCommand
-      );
       const nextShellBase: Shell = {
         ...sh,
         lazyStart: false,
@@ -416,30 +328,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       };
 
       let nextShell = nextShellBase;
-      if (mode === "restore" && hasRestorePath) {
+      if (mode === "restore" && sh.resumeEntryCommand) {
         nextShell = {
           ...nextShellBase,
-          restorePending: Boolean(
-            sh.restorePending ||
-              sh.restoreResolvePending ||
-              sh.restoreTarget ||
-              sh.restoreFallbackCommand
-          ),
+          startupCommand: sh.resumeEntryCommand,
+          status: "idle",
         };
       } else if (mode === "new_agent_session") {
         nextShell = {
           ...nextShellBase,
-          restoreCapability: null,
-          restoreCommandPrefix: null,
-          restoreCommandSuffix: null,
-          restoreFallbackCommand: null,
-          restoreTarget: null,
-          restorePending: false,
-          restoreResolvePending: false,
-          restoreResolveStrategy: null,
-          restoreLaunchStartedAt: null,
-          restoreLaunchCwd: null,
-          firstMessagePreview: null,
+          taskSummary: null,
           terminalTitle: null,
           status: "idle",
           startupCommand:
@@ -450,22 +348,19 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...nextShellBase,
           agentKind: null,
           agentLabel: null,
-          restoreCapability: null,
-          restoreCommandPrefix: null,
-          restoreCommandSuffix: null,
-          restoreFallbackCommand: null,
+          resumeEntryCommand: null,
           newSessionCommand: null,
-          restoreTarget: null,
-          restorePending: false,
-          restoreResolvePending: false,
-          restoreResolveStrategy: null,
-          restoreLaunchStartedAt: null,
-          restoreLaunchCwd: null,
-          firstMessagePreview: null,
+          taskSummary: null,
           terminalTitle: null,
           status: "idle",
         };
       }
+
+      nextShell = syncShellAutoName(
+        nextShell,
+        s.sidebarWidth,
+        s.terminalSettings.codexUseSelfSummaryTitle
+      );
 
       if (
         nextShell === sh ||
@@ -501,7 +396,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...sh,
           terminalTitle: nextTitle,
         },
-        s.sidebarWidth
+        s.sidebarWidth,
+        s.terminalSettings.codexUseSelfSummaryTitle
       );
       if (areShellNameFieldsEqual(sh, nextShell)) return {};
       return {
@@ -514,7 +410,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().persist();
   },
 
-  setShellFirstMessagePreview: (id, message) => {
+  setShellTaskSummary: (id, message) => {
     const nextMessage = message.trim();
     if (!nextMessage) return;
 
@@ -524,9 +420,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       const nextShell = syncShellAutoName(
         {
           ...sh,
-          firstMessagePreview: nextMessage,
+          taskSummary: nextMessage,
         },
-        s.sidebarWidth
+        s.sidebarWidth,
+        s.terminalSettings.codexUseSelfSummaryTitle
       );
       if (areShellNameFieldsEqual(sh, nextShell)) return {};
       return {
@@ -663,7 +560,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       let changed = s.sidebarWidth !== nextWidth;
 
       for (const [id, sh] of Object.entries(s.shells)) {
-        const nextShell = syncShellAutoName(sh, nextWidth);
+        const nextShell = syncShellAutoName(
+          sh,
+          nextWidth,
+          s.terminalSettings.codexUseSelfSummaryTitle
+        );
         nextShells[id] = nextShell;
         if (!changed && !areShellNameFieldsEqual(sh, nextShell)) {
           changed = true;
@@ -683,7 +584,75 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
   setTerminalSettings: (settings) => {
-    set({ terminalSettings: normalizeTerminalSettings(settings) });
+    const normalized = normalizeTerminalSettings(settings);
+    set((s) => {
+      const nextShells: Record<string, Shell> = {};
+      let shellNamesChanged = false;
+
+      for (const [id, sh] of Object.entries(s.shells)) {
+        const nextShell = syncShellAutoName(
+          sh,
+          s.sidebarWidth,
+          normalized.codexUseSelfSummaryTitle
+        );
+        nextShells[id] = nextShell;
+        if (!shellNamesChanged && !areShellNameFieldsEqual(sh, nextShell)) {
+          shellNamesChanged = true;
+        }
+      }
+
+      if (!shellNamesChanged && areTerminalSettingsEqual(s.terminalSettings, normalized)) {
+        return {};
+      }
+
+      return {
+        terminalSettings: normalized,
+        ...(shellNamesChanged ? { shells: nextShells } : {}),
+      };
+    });
+    get().persist();
+  },
+
+  getAgentRestoreDefault: (agentKind) =>
+    get().terminalSettings.restoreDefaultsByAgent[agentKind],
+
+  setAgentRestoreDefault: (agentKind, mode) => {
+    set((s) => {
+      const nextTerminalSettings = normalizeTerminalSettings({
+        ...s.terminalSettings,
+        restoreDefaultsByAgent: {
+          ...s.terminalSettings.restoreDefaultsByAgent,
+          [agentKind]: mode,
+        },
+      });
+      if (areTerminalSettingsEqual(s.terminalSettings, nextTerminalSettings)) {
+        return {};
+      }
+      return {
+        terminalSettings: nextTerminalSettings,
+      };
+    });
+    get().persist();
+  },
+
+  clearAgentRestoreDefault: (agentKind) => {
+    set((s) => {
+      const nextRestoreDefaultsByAgent = removeAgentRestoreDefault(
+        s.terminalSettings.restoreDefaultsByAgent,
+        agentKind
+      );
+      if (
+        nextRestoreDefaultsByAgent === s.terminalSettings.restoreDefaultsByAgent
+      ) {
+        return {};
+      }
+      return {
+        terminalSettings: normalizeTerminalSettings({
+          ...s.terminalSettings,
+          restoreDefaultsByAgent: nextRestoreDefaultsByAgent,
+        }),
+      };
+    });
     get().persist();
   },
 
@@ -700,26 +669,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const agentKind =
           normalizeAgentKind(s.agentKind) ??
           inferAgentKindFromLabel(s.agentLabel ?? null);
-        const restoreTarget = normalizeRestoreTarget(s.restoreTarget);
-        const restoreFallbackCommand =
-          normalizeNullableString(s.restoreFallbackCommand) ??
-          normalizeNullableString(s.resumeCommand);
-        const newSessionCommand =
-          normalizeNullableString(s.newSessionCommand) ??
-          buildDefaultAgentNewSessionCommand(agentKind);
-        const restoreCommandPrefix = sanitizeAgentRestoreCommandPrefix(
-          agentKind,
-          normalizeNullableString(s.restoreCommandPrefix)
-        );
-        const restoreResolveStrategy = normalizeRestoreResolveStrategy(
-          s.restoreResolveStrategy
-        );
-        const restoreResolvePending = Boolean(
-          !restoreTarget &&
-            s.restoreResolvePending &&
-            restoreResolveStrategy &&
-            s.restoreLaunchStartedAt
-        );
+        const migratedCommands = resolvePersistedAgentCommands(s, agentKind);
         const hydratedShell = syncShellAutoName(
           {
             id: s.id,
@@ -730,27 +680,13 @@ export const useAppStore = create<AppState>((set, get) => ({
             nameMode,
             agentKind,
             agentLabel: s.agentLabel ?? null,
-            restoreCapability:
-              normalizeRestoreCapability(s.restoreCapability) ??
-              inferRestoreCapability(agentKind, restoreTarget, restoreFallbackCommand),
-            restoreCommandPrefix,
-            restoreCommandSuffix: normalizeNullableString(
-              s.restoreCommandSuffix
-            ),
-            restoreFallbackCommand,
-            newSessionCommand,
+            resumeEntryCommand: migratedCommands.resumeEntryCommand,
+            newSessionCommand: migratedCommands.newSessionCommand,
             startupCommand: null,
-            restoreTarget,
-            restorePending: Boolean(restoreTarget || restoreFallbackCommand),
-            restoreResolvePending,
-            restoreResolveStrategy,
-            restoreLaunchStartedAt:
-              typeof s.restoreLaunchStartedAt === "number"
-                ? s.restoreLaunchStartedAt
-                : null,
-            restoreLaunchCwd: normalizeNullableString(s.restoreLaunchCwd),
             lazyStart: true,
-            firstMessagePreview: s.firstMessagePreview ?? null,
+            taskSummary:
+              normalizeNullableString(s.taskSummary) ??
+              normalizeNullableString(s.firstMessagePreview),
             terminalTitle: normalizeTerminalTitle(s.terminalTitle),
             cwd: s.cwd,
             initialCwd: s.cwd,
@@ -760,7 +696,8 @@ export const useAppStore = create<AppState>((set, get) => ({
             cols: 80,
             rows: 24,
           },
-          sidebarWidth
+          sidebarWidth,
+          terminalSettings.codexUseSelfSummaryTitle
         );
         shells[s.id] = {
           ...hydratedShell,
@@ -794,9 +731,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  persist: async () => {
+  persist: () => {
     const s = get();
-    if (!s.hydrated) return;
+    if (!s.hydrated) return Promise.resolve();
     const snapshot: PersistedState = {
       projects: s.projectOrder.map((pid) => {
         const p = s.projects[pid];
@@ -813,17 +750,9 @@ export const useAppStore = create<AppState>((set, get) => ({
               nameMode: sh.nameMode,
               agentKind: sh.agentKind,
               agentLabel: sh.agentLabel,
-              restoreCapability: sh.restoreCapability,
-              restoreCommandPrefix: sh.restoreCommandPrefix,
-              restoreCommandSuffix: sh.restoreCommandSuffix,
-              restoreFallbackCommand: sh.restoreFallbackCommand,
+              resumeEntryCommand: sh.resumeEntryCommand,
               newSessionCommand: sh.newSessionCommand,
-              restoreTarget: sh.restoreTarget,
-              restoreResolvePending: sh.restoreResolvePending,
-              restoreResolveStrategy: sh.restoreResolveStrategy,
-              restoreLaunchStartedAt: sh.restoreLaunchStartedAt,
-              restoreLaunchCwd: sh.restoreLaunchCwd,
-              firstMessagePreview: sh.firstMessagePreview,
+              taskSummary: sh.taskSummary,
               terminalTitle: sh.terminalTitle,
               cwd: sh.cwd || sh.initialCwd,
             };
@@ -834,13 +763,31 @@ export const useAppStore = create<AppState>((set, get) => ({
       sidebarWidth: s.sidebarWidth,
       terminal: s.terminalSettings,
     };
-    try {
-      await savePersistedState(snapshot);
-    } catch (e) {
-      console.warn("persist failed", e);
-    }
+    return schedulePersist(snapshot);
   },
 }));
+
+function schedulePersist(snapshot: PersistedState): Promise<void> {
+  if (persistTimer !== null) {
+    clearTimeout(persistTimer);
+  }
+
+  return new Promise((resolve) => {
+    persistResolvers.push(resolve);
+    persistTimer = setTimeout(async () => {
+      persistTimer = null;
+      const resolvers = persistResolvers;
+      persistResolvers = [];
+      try {
+        await savePersistedState(snapshot);
+      } catch (e) {
+        console.warn("persist failed", e);
+      } finally {
+        for (const resolver of resolvers) resolver();
+      }
+    }, PERSIST_DEBOUNCE_MS);
+  });
+}
 
 function pickNextActive(
   shells: Record<string, Shell>,
@@ -857,15 +804,29 @@ function pickNextActive(
   return null;
 }
 
-function syncShellAutoName(shell: Shell, sidebarWidth: number): Shell {
+function syncShellAutoName(
+  shell: Shell,
+  sidebarWidth: number,
+  codexUseSelfSummaryTitle: boolean
+): Shell {
   const terminalTitle = normalizeTerminalTitle(shell.terminalTitle);
   const fallbackName = shell.autoName ?? shell.name;
+  const codexSummaryTitle =
+    shell.agentKind === "codex" && codexUseSelfSummaryTitle
+      ? buildCodexSummaryShellName(
+          shell.taskSummary,
+          terminalTitle,
+          sidebarWidth
+        )
+      : null;
   const autoName =
-    terminalTitle
-      ? terminalTitle
+    codexSummaryTitle
+      ? codexSummaryTitle
+      : terminalTitle
+        ? terminalTitle
       : buildAgentShellName(
           shell.agentLabel,
-          shell.firstMessagePreview,
+          shell.taskSummary,
           fallbackName,
           sidebarWidth
         );
@@ -884,7 +845,7 @@ function areShellNameFieldsEqual(a: Shell, b: Shell): boolean {
     a.nameMode === b.nameMode &&
     a.agentKind === b.agentKind &&
     a.agentLabel === b.agentLabel &&
-    a.firstMessagePreview === b.firstMessagePreview &&
+    a.taskSummary === b.taskSummary &&
     a.terminalTitle === b.terminalTitle
   );
 }
@@ -892,25 +853,11 @@ function areShellNameFieldsEqual(a: Shell, b: Shell): boolean {
 function areShellRestoreFieldsEqual(a: Shell, b: Shell): boolean {
   return (
     a.agentKind === b.agentKind &&
-    a.restoreCapability === b.restoreCapability &&
-    a.restoreCommandPrefix === b.restoreCommandPrefix &&
-    a.restoreCommandSuffix === b.restoreCommandSuffix &&
-    a.restoreFallbackCommand === b.restoreFallbackCommand &&
+    a.resumeEntryCommand === b.resumeEntryCommand &&
     a.newSessionCommand === b.newSessionCommand &&
-    a.restorePending === b.restorePending &&
-    a.restoreResolvePending === b.restoreResolvePending &&
-    a.restoreResolveStrategy === b.restoreResolveStrategy &&
-    a.restoreLaunchStartedAt === b.restoreLaunchStartedAt &&
-    a.restoreLaunchCwd === b.restoreLaunchCwd &&
-    areRestoreTargetsEqual(a.restoreTarget, b.restoreTarget)
+    a.startupCommand === b.startupCommand &&
+    a.lazyStart === b.lazyStart
   );
-}
-
-function areRestoreTargetsEqual(
-  a: RestoreTarget | null,
-  b: RestoreTarget | null
-): boolean {
-  return a?.kind === b?.kind && a?.value === b?.value;
 }
 
 function normalizeTerminalTitle(title: string | null | undefined): string | null {
@@ -918,31 +865,33 @@ function normalizeTerminalTitle(title: string | null | undefined): string | null
   return normalized || null;
 }
 
+function areTerminalSettingsEqual(
+  a: TerminalSettings,
+  b: TerminalSettings
+): boolean {
+  return (
+    a.locale === b.locale &&
+    a.shellExecutable === b.shellExecutable &&
+    a.fontFamily === b.fontFamily &&
+    a.extraEnvText === b.extraEnvText &&
+    a.alertPopupDurationSeconds === b.alertPopupDurationSeconds &&
+    a.codexUseSelfSummaryTitle === b.codexUseSelfSummaryTitle &&
+    areRestoreDefaultsByAgentEqual(
+      a.restoreDefaultsByAgent,
+      b.restoreDefaultsByAgent
+    ) &&
+    areShortcutKeymapsEqual(a.shortcutKeymap, b.shortcutKeymap)
+  );
+}
+
 function normalizeNullableString(value: string | null | undefined): string | null {
   const normalized = value?.trim() ?? "";
   return normalized || null;
 }
 
-function normalizeRestoreTarget(
-  target: RestoreTarget | PersistedRestoreTarget | null | undefined
-): RestoreTarget | null {
-  const value = normalizeNullableString(target?.value);
-  if (!target || !value) return null;
-  if (target.kind !== "thread_id" && target.kind !== "session_id") return null;
-  return {
-    kind: target.kind,
-    value,
-  };
-}
-
 function normalizeAgentKind(value: string | null | undefined): AgentKind | null {
-  if (
-    value === "codex" ||
-    value === "claude" ||
-    value === "gemini" ||
-    value === "opencode"
-  ) {
-    return value;
+  if (value && AGENT_KINDS.includes(value as AgentKind)) {
+    return value as AgentKind;
   }
   return null;
 }
@@ -956,36 +905,129 @@ function inferAgentKindFromLabel(label: string | null): AgentKind | null {
   return null;
 }
 
-function normalizeRestoreCapability(
-  value: string | null | undefined
-): RestoreCapability | null {
-  if (
-    value === "exact" ||
-    value === "recent" ||
-    value === "best_effort" ||
-    value === "unsupported"
-  ) {
-    return value;
+function resolvePersistedAgentCommands(
+  shell: PersistedState["projects"][number]["shells"][number],
+  agentKind: AgentKind | null
+): {
+  resumeEntryCommand: string | null;
+  newSessionCommand: string | null;
+} {
+  const persistedResumeEntryCommand = normalizeNullableString(
+    shell.resumeEntryCommand
+  );
+  const persistedNewSessionCommand = normalizeNullableString(
+    shell.newSessionCommand
+  );
+
+  if (persistedResumeEntryCommand || persistedNewSessionCommand) {
+    return {
+      resumeEntryCommand:
+        persistedResumeEntryCommand ??
+        inferResumeEntryCommandFromCommand(
+          persistedNewSessionCommand,
+          shell.cwd,
+          agentKind
+        ) ??
+        buildDefaultAgentResumeEntryCommand(agentKind),
+      newSessionCommand:
+        persistedNewSessionCommand ??
+        inferNewSessionCommandFromCommand(
+          persistedResumeEntryCommand,
+          shell.cwd,
+          agentKind
+        ) ??
+        buildDefaultAgentNewSessionCommand(agentKind),
+    };
   }
-  return null;
+
+  const legacyCandidates = [
+    normalizeNullableString(shell.newSessionCommand),
+    normalizeNullableString(shell.restoreFallbackCommand),
+    buildLegacyCodexResumeCommand(shell),
+    normalizeNullableString(shell.resumeCommand),
+  ];
+
+  for (const candidate of legacyCandidates) {
+    const launch = inferLaunchFromCommand(candidate, shell.cwd, agentKind);
+    if (!launch) continue;
+    return {
+      resumeEntryCommand:
+        normalizeNullableString(launch.resumeEntryCommand) ??
+        buildDefaultAgentResumeEntryCommand(launch.kind),
+      newSessionCommand:
+        normalizeNullableString(launch.newSessionCommand) ??
+        buildDefaultAgentNewSessionCommand(launch.kind),
+    };
+  }
+
+  return {
+    resumeEntryCommand: buildDefaultAgentResumeEntryCommand(agentKind),
+    newSessionCommand: buildDefaultAgentNewSessionCommand(agentKind),
+  };
 }
 
-function normalizeRestoreResolveStrategy(
-  value: string | null | undefined
-): RestoreResolveStrategy | null {
-  if (value === "codex_new_thread" || value === "codex_latest_cwd") {
-    return value;
-  }
-  return null;
+function inferResumeEntryCommandFromCommand(
+  command: string | null,
+  cwd: string,
+  expectedKind: AgentKind | null
+): string | null {
+  return inferLaunchFromCommand(command, cwd, expectedKind)?.resumeEntryCommand ?? null;
 }
 
-function inferRestoreCapability(
-  agentKind: AgentKind | null,
-  restoreTarget: RestoreTarget | null,
-  restoreFallbackCommand: string | null
-): RestoreCapability | null {
-  if (agentKind === "codex" && restoreTarget) return "exact";
-  if (agentKind === "codex" && restoreFallbackCommand) return "exact";
-  if (agentKind && restoreFallbackCommand) return "recent";
-  return null;
+function inferNewSessionCommandFromCommand(
+  command: string | null,
+  cwd: string,
+  expectedKind: AgentKind | null
+): string | null {
+  return inferLaunchFromCommand(command, cwd, expectedKind)?.newSessionCommand ?? null;
 }
+
+function inferLaunchFromCommand(
+  command: string | null,
+  cwd: string,
+  expectedKind: AgentKind | null
+): DetectedAgentLaunch | null {
+  if (!command) return null;
+  const launch = detectAgentLaunchFromCommand(command, cwd);
+  if (!launch) return null;
+  if (expectedKind && launch.kind !== expectedKind) return null;
+  return launch;
+}
+
+function buildLegacyCodexResumeCommand(
+  shell: PersistedState["projects"][number]["shells"][number]
+): string | null {
+  const prefix = normalizeNullableString(shell.restoreCommandPrefix);
+  const suffix = normalizeNullableString(shell.restoreCommandSuffix);
+  if (!prefix) return null;
+  return [prefix, suffix].filter(Boolean).join(" ").trim() || null;
+}
+
+function areRestoreDefaultsByAgentEqual(
+  a: RestoreDefaultsByAgent,
+  b: RestoreDefaultsByAgent
+): boolean {
+  return AGENT_KINDS.every((agentKind) => a[agentKind] === b[agentKind]);
+}
+
+function removeAgentRestoreDefault(
+  restoreDefaultsByAgent: RestoreDefaultsByAgent,
+  agentKind: AgentKind
+): RestoreDefaultsByAgent {
+  if (!(agentKind in restoreDefaultsByAgent)) {
+    return restoreDefaultsByAgent;
+  }
+  const nextRestoreDefaultsByAgent = { ...restoreDefaultsByAgent };
+  delete nextRestoreDefaultsByAgent[agentKind];
+  return nextRestoreDefaultsByAgent;
+}
+
+type AppStoreState = ReturnType<typeof useAppStore.getState>;
+
+export const selectRestoreDefaultsByAgent = (state: AppStoreState) =>
+  state.terminalSettings.restoreDefaultsByAgent;
+
+export const selectAgentRestoreDefault =
+  (agentKind: AgentKind) =>
+  (state: AppStoreState): LazyShellStartMode | undefined =>
+    state.terminalSettings.restoreDefaultsByAgent[agentKind];

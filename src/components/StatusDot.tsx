@@ -1,4 +1,5 @@
 import { BellRing } from "lucide-react";
+import { useI18n } from "../useI18n";
 import { cn } from "../utils";
 import type { ShellStatus } from "../types";
 
@@ -43,8 +44,15 @@ function WaitingDot({
 }
 
 export function StatusDot({ status, needsAttention, className }: Props) {
+  const { t } = useI18n();
+
   if (needsAttention) {
-    return <AttentionIcon className={className} label="needs attention" />;
+    return (
+      <AttentionIcon
+        className={className}
+        label={t("status.needsAttention")}
+      />
+    );
   }
   if (status === "running") {
     return (
@@ -53,18 +61,18 @@ export function StatusDot({ status, needsAttention, className }: Props) {
           "inline-block h-2.5 w-2.5 rounded-full border border-text-2/60 bg-text-2/20 anim-pulse",
           className
         )}
-        aria-label="running"
+        aria-label={t("status.running")}
       />
     );
   }
   if (status === "waiting") {
-    return <WaitingDot className={className} label="waiting for input" />;
+    return <WaitingDot className={className} label={t("status.waiting")} />;
   }
   if (status === "error") {
     return (
       <span
         className={cn("inline-block h-2 w-2 rounded-full bg-bad", className)}
-        aria-label="error"
+        aria-label={t("status.error")}
       />
     );
   }
@@ -75,7 +83,7 @@ export function StatusDot({ status, needsAttention, className }: Props) {
           "inline-block h-2 w-2 rounded-full bg-text-2/70",
           className
         )}
-        aria-label="exited"
+        aria-label={t("status.exited")}
       />
     );
   }
@@ -83,7 +91,7 @@ export function StatusDot({ status, needsAttention, className }: Props) {
   return (
     <span
       className={cn("inline-block h-2 w-2 rounded-full bg-text-2/40", className)}
-      aria-label="idle"
+      aria-label={t("status.idle")}
     />
   );
 }

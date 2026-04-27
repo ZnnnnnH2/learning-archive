@@ -1,12 +1,16 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { primeAlertSound } from "./alertSound";
 import { ShellAlertsOverlay } from "./components/ShellAlertsOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalHost } from "./components/TerminalHost";
+import { loadPersistedState, onShellNotificationActivated } from "./ipc";
+import { activateShellAlertByTag } from "./shellAlerts";
+import { useI18n } from "./useI18n";
 import { useAppStore } from "./store";
-import { loadPersistedState } from "./ipc";
 
 export default function App() {
+  const { locale, t } = useI18n();
+  const pendingNotificationTagsRef = useRef<string[]>([]);
   const hydrated = useAppStore((s) => s.hydrated);
   const hydrateFrom = useAppStore((s) => s.hydrateFrom);
   const toggleSidebar = useAppStore((s) => s.toggleSidebar);
@@ -21,6 +25,52 @@ export default function App() {
   useEffect(() => {
     primeAlertSound();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+  }, [locale]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    onShellNotificationActivated((event) => {
+      if (import.meta.env.DEV) {
+        console.debug("shell notification activated", { tag: event.tag });
+      }
+      if (!useAppStore.getState().hydrated) {
+        pendingNotificationTagsRef.current.push(event.tag);
+        return;
+      }
+      void activateShellAlertByTag(event.tag);
+    })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch((error) => {
+        console.warn("failed to listen for shell notification activation", error);
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated || pendingNotificationTagsRef.current.length === 0) {
+      return;
+    }
+
+    const pendingTags = pendingNotificationTagsRef.current.splice(0);
+    for (const tag of pendingTags) {
+      void activateShellAlertByTag(tag);
+    }
+  }, [hydrated]);
 
   useEffect(() => {
     (async () => {
@@ -88,7 +138,7 @@ export default function App() {
   if (!hydrated) {
     return (
       <div className="h-full w-full flex items-center justify-center bg-bg-0 text-text-2 text-[12px]">
-        <span className="anim-pulse">loading…</span>
+        <span className="anim-pulse">{t("app.loading")}</span>
       </div>
     );
   }

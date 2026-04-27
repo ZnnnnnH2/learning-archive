@@ -1,86 +1,39 @@
+import {
+  closeShellNotification,
+  sendShellNotification,
+} from "./ipc";
+
 interface DesktopNotificationOptions {
   title: string;
   body: string;
-  tag?: string;
+  tag: string;
   timeoutMs?: number;
-  onClick?: () => void | Promise<void>;
 }
 
-let permissionRequest: Promise<NotificationPermission> | null = null;
-const activeNotifications = new Map<
-  string,
-  { notification: Notification; timeoutId: number | null }
->();
-
-async function ensureNotificationPermission(): Promise<NotificationPermission> {
-  if (typeof window === "undefined" || !("Notification" in window)) {
-    return "denied";
-  }
-
-  if (Notification.permission !== "default") {
-    return Notification.permission;
-  }
-
-  if (!permissionRequest) {
-    permissionRequest = Notification.requestPermission().finally(() => {
-      permissionRequest = null;
-    });
-  }
-
-  try {
-    return await permissionRequest;
-  } catch {
-    return "denied";
-  }
+function normalizeNotificationTag(tag: string): string | null {
+  const normalizedTag = tag.trim();
+  return normalizedTag || null;
 }
 
 export async function sendDesktopNotification(
   options: DesktopNotificationOptions
 ): Promise<boolean> {
-  const permission = await ensureNotificationPermission();
-  if (permission !== "granted") {
-    return false;
-  }
-
   try {
-    const tag = options.tag?.trim() || undefined;
-    if (tag) {
-      closeDesktopNotification(tag);
+    const tag = normalizeNotificationTag(options.tag);
+    if (!tag) {
+      return false;
     }
-
-    const notification = new Notification(options.title, {
+    try {
+      await closeShellNotification(tag);
+    } catch (error) {
+      console.warn("failed to close previous desktop notification", error);
+    }
+    await sendShellNotification({
+      title: options.title,
       body: options.body,
       tag,
-      requireInteraction: false,
-      silent: true,
+      timeoutMs: options.timeoutMs,
     });
-
-    let timeoutId: number | null = null;
-    const cleanup = () => {
-      if (timeoutId != null) {
-        window.clearTimeout(timeoutId);
-      }
-      if (tag && activeNotifications.get(tag)?.notification === notification) {
-        activeNotifications.delete(tag);
-      }
-    };
-
-    notification.onclick = () => {
-      cleanup();
-      notification.close();
-      void options.onClick?.();
-    };
-    notification.onclose = cleanup;
-
-    const timeoutMs = options.timeoutMs ?? 3000;
-    timeoutId = window.setTimeout(() => {
-      cleanup();
-      notification.close();
-    }, timeoutMs);
-
-    if (tag) {
-      activeNotifications.set(tag, { notification, timeoutId });
-    }
     return true;
   } catch (error) {
     console.warn("desktop notification failed", error);
@@ -89,17 +42,11 @@ export async function sendDesktopNotification(
 }
 
 export function closeDesktopNotification(tag: string) {
-  const normalizedTag = tag.trim();
+  const normalizedTag = normalizeNotificationTag(tag);
   if (!normalizedTag) {
     return;
   }
-  const active = activeNotifications.get(normalizedTag);
-  if (!active) {
-    return;
-  }
-  if (active.timeoutId != null) {
-    window.clearTimeout(active.timeoutId);
-  }
-  activeNotifications.delete(normalizedTag);
-  active.notification.close();
+  void closeShellNotification(normalizedTag).catch((error) => {
+    console.warn("failed to close desktop notification", error);
+  });
 }

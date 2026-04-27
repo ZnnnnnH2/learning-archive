@@ -1,10 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
-  AgentKind,
   PersistedState,
-  RestoreResolveStrategy,
-  RestoreTarget,
 } from "./types";
 import type { PtySpawnOptions } from "./terminalConfig";
 
@@ -59,29 +56,6 @@ export async function pathExists(path: string): Promise<boolean> {
   return invoke<boolean>("path_exists", { path });
 }
 
-export interface AgentRestoreResolveRequest {
-  agentKind: AgentKind;
-  strategy: RestoreResolveStrategy;
-  cwd: string;
-  launchStartedAt: number | null;
-}
-
-export interface AgentRestoreResolveResult {
-  target: RestoreTarget;
-  createdAtMs: number | null;
-  cwd: string | null;
-  rolloutPath: string | null;
-  source: "state_db" | "rollout";
-}
-
-export async function resolveAgentRestoreTarget(
-  request: AgentRestoreResolveRequest
-): Promise<AgentRestoreResolveResult | null> {
-  return invoke<AgentRestoreResolveResult | null>("resolve_agent_restore_target", {
-    request,
-  });
-}
-
 export async function openProjectInEditor(
   editor: ExternalEditor,
   path: string
@@ -91,6 +65,23 @@ export async function openProjectInEditor(
 
 export async function openProjectInFileManager(path: string): Promise<void> {
   await invoke("open_project_in_file_manager", { path });
+}
+
+export interface ShellNotificationRequest {
+  title: string;
+  body: string;
+  tag: string;
+  timeoutMs?: number;
+}
+
+export async function sendShellNotification(
+  notification: ShellNotificationRequest
+): Promise<void> {
+  await invoke("send_shell_notification", { notification });
+}
+
+export async function closeShellNotification(tag: string): Promise<void> {
+  await invoke("close_shell_notification", { tag });
 }
 
 export interface PtyDataEvent {
@@ -114,4 +105,17 @@ export function onPtyExit(
   cb: (e: PtyExitEvent) => void
 ): Promise<UnlistenFn> {
   return listen<PtyExitEvent>("pty://exit", (e) => cb(e.payload));
+}
+
+export interface ShellNotificationActivatedEvent {
+  tag: string;
+}
+
+export function onShellNotificationActivated(
+  cb: (e: ShellNotificationActivatedEvent) => void
+): Promise<UnlistenFn> {
+  return listen<ShellNotificationActivatedEvent>(
+    "shell_notification://activated",
+    (e) => cb(e.payload)
+  );
 }

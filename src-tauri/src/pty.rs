@@ -4,12 +4,19 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, ChildKiller, CommandBuilder, MasterPty, PtySize};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::io::{Read, Write};
+use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::Arc;
 use std::thread;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
+
+const MAX_BUFFERED_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const PTY_READ_BUFFER_BYTES: usize = 16 * 1024;
+const PTY_EMIT_BATCH_BYTES: usize = 128 * 1024;
+const PTY_EMIT_BATCH_WINDOW: Duration = Duration::from_millis(8);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,7 +47,8 @@ pub struct PtySpawnOptions {
 struct BufferedOutput {
     attached: bool,
     last_seq: u64,
-    chunks: Vec<Vec<u8>>,
+    total_bytes: usize,
+    chunks: VecDeque<Vec<u8>>,
 }
 
 pub struct Session {
@@ -83,24 +91,41 @@ impl Session {
         let mut buffered = self.buffered_output.lock();
         buffered.last_seq += 1;
         if !buffered.attached {
-            buffered.chunks.push(data.to_vec());
+            push_buffered_chunk(&mut buffered, data);
         }
         buffered.last_seq
     }
 
     pub fn attach_output(&self) -> PtyAttachSnapshot {
         let mut buffered = self.buffered_output.lock();
-        let total_len: usize = buffered.chunks.iter().map(Vec::len).sum();
-        let mut joined = Vec::with_capacity(total_len);
-        for chunk in buffered.chunks.drain(..) {
+        let mut joined = Vec::with_capacity(buffered.total_bytes);
+        while let Some(chunk) = buffered.chunks.pop_front() {
             joined.extend_from_slice(&chunk);
         }
+        buffered.total_bytes = 0;
         buffered.attached = true;
 
         PtyAttachSnapshot {
             data: B64.encode(joined),
             last_seq: buffered.last_seq,
         }
+    }
+}
+
+fn push_buffered_chunk(buffered: &mut BufferedOutput, data: &[u8]) {
+    if data.is_empty() {
+        return;
+    }
+
+    buffered.total_bytes += data.len();
+    buffered.chunks.push_back(data.to_vec());
+
+    while buffered.total_bytes > MAX_BUFFERED_OUTPUT_BYTES {
+        let Some(removed) = buffered.chunks.pop_front() else {
+            buffered.total_bytes = 0;
+            break;
+        };
+        buffered.total_bytes = buffered.total_bytes.saturating_sub(removed.len());
     }
 }
 
@@ -203,32 +228,56 @@ pub fn spawn_session(
         buffered_output: Mutex::new(BufferedOutput {
             attached: false,
             last_seq: 0,
-            chunks: Vec::new(),
+            total_bytes: 0,
+            chunks: VecDeque::new(),
         }),
     });
 
     manager.insert(id.clone(), session);
 
-    // Reader thread — stream PTY output as base64 events
+    // Reader thread — batch PTY output before emitting IPC events.
     {
         let app = app.clone();
         let id = id.clone();
         let session = manager.get(&id).expect("session inserted before reader");
+        let (output_tx, output_rx) = mpsc::channel::<Vec<u8>>();
         thread::spawn(move || {
-            let mut buf = [0u8; 8192];
+            let mut buf = [0u8; PTY_READ_BUFFER_BYTES];
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let seq = session.record_output(&buf[..n]);
-                        let data = B64.encode(&buf[..n]);
-                        let _ = app.emit(
-                            "pty://data",
-                            serde_json::json!({ "sessionId": id, "data": data, "seq": seq }),
-                        );
+                        if output_tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
                     }
                     Err(_) => break,
                 }
+            }
+        });
+        thread::spawn(move || {
+            while let Ok(first_chunk) = output_rx.recv() {
+                let mut batch = first_chunk;
+                let deadline = Instant::now() + PTY_EMIT_BATCH_WINDOW;
+
+                while batch.len() < PTY_EMIT_BATCH_BYTES {
+                    let now = Instant::now();
+                    if now >= deadline {
+                        break;
+                    }
+                    match output_rx.recv_timeout(deadline.saturating_duration_since(now)) {
+                        Ok(chunk) => batch.extend_from_slice(&chunk),
+                        Err(RecvTimeoutError::Timeout) => break,
+                        Err(RecvTimeoutError::Disconnected) => break,
+                    }
+                }
+
+                let seq = session.record_output(&batch);
+                let data = B64.encode(&batch);
+                let _ = app.emit(
+                    "pty://data",
+                    serde_json::json!({ "sessionId": id, "data": data, "seq": seq }),
+                );
             }
         });
     }

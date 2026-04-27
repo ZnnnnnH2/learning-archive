@@ -7,12 +7,30 @@ import {
 import type { ParsedTerminalNotification } from "./shellSignals";
 import { useShellAlertStore } from "./shellAlertStore";
 import { useAppStore } from "./store";
+import { translate } from "./i18n";
 
 const ALERT_SOUND_THROTTLE_MS = 800;
 const lastAlertSoundAt = new Map<string, number>();
+const SHELL_ALERT_TAG_PREFIX = "sideshell-shell-";
+
+function logShellAlertDebug(message: string, data: Record<string, unknown>) {
+  if (import.meta.env.DEV) {
+    console.debug(`[shell-alerts] ${message}`, data);
+  }
+}
 
 function getShellAlertTag(shellId: string): string {
-  return `sideshell-shell-${shellId}`;
+  return `${SHELL_ALERT_TAG_PREFIX}${shellId}`;
+}
+
+function getShellIdFromAlertTag(tag: string): string | null {
+  const normalizedTag = tag.trim();
+  if (!normalizedTag.startsWith(SHELL_ALERT_TAG_PREFIX)) {
+    return null;
+  }
+
+  const shellId = normalizedTag.slice(SHELL_ALERT_TAG_PREFIX.length);
+  return shellId || null;
 }
 
 function buildShellAlertMessage(
@@ -25,13 +43,17 @@ function buildShellAlertMessage(
     return null;
   }
 
-  const projectName = state.projects[shell.projectId]?.name ?? "Project";
-  const shellName = shell.name ?? "Shell";
+  const locale = state.terminalSettings.locale;
+  const projectName =
+    state.projects[shell.projectId]?.name ??
+    translate(locale, "alerts.defaultProject");
+  const shellName =
+    shell.name ?? translate(locale, "alerts.defaultShell");
   return {
     title: notification.title?.trim() || `${projectName} · ${shellName}`,
     body:
       notification.body?.trim() ||
-      `${shellName} in ${projectName} needs attention.`,
+      translate(locale, "alerts.defaultBody", { shellName, projectName }),
   };
 }
 
@@ -42,9 +64,16 @@ export function dismissShellAlert(shellId: string) {
 
 export async function activateShellFromAlert(shellId: string): Promise<void> {
   const state = useAppStore.getState();
-  if (!state.shells[shellId]) {
+  const shell = state.shells[shellId];
+  if (!shell) {
+    logShellAlertDebug("activation ignored for missing shell", { shellId });
     dismissShellAlert(shellId);
     return;
+  }
+
+  const project = state.projects[shell.projectId];
+  if (project && !project.expanded) {
+    state.toggleProjectExpand(shell.projectId);
   }
 
   state.setActive(shellId);
@@ -59,6 +88,15 @@ export async function activateShellFromAlert(shellId: string): Promise<void> {
   } catch (error) {
     console.warn("failed to focus app window from alert", error);
   }
+}
+
+export async function activateShellAlertByTag(tag: string): Promise<void> {
+  const shellId = getShellIdFromAlertTag(tag);
+  if (!shellId) {
+    logShellAlertDebug("activation ignored for invalid tag", { tag });
+    return;
+  }
+  await activateShellFromAlert(shellId);
 }
 
 export function raiseShellAlert(
@@ -99,6 +137,5 @@ export function raiseShellAlert(
     body: message.body,
     tag: getShellAlertTag(shellId),
     timeoutMs: durationMs,
-    onClick: () => activateShellFromAlert(shellId),
   });
 }

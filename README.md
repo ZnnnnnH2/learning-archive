@@ -9,7 +9,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 - 以项目为中心组织终端，而不是只堆标签页。
 - 同一项目下可以长期保留多个 shell，切换时不会销毁后台任务。
 - 侧边栏直接展示 shell 的名称、cwd、运行状态和 attention 提醒。
-- 针对 agent CLI 做了自动命名、恢复目标保存和惰性恢复。
+- 针对 agent CLI 做了自动命名、CLI 原生恢复入口保存和惰性恢复。
 - 桌面应用形态更适合把多个开发上下文固定下来长期使用。
 
 ## 核心能力
@@ -28,7 +28,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 ### 智能命名与状态感知
 
 - 自动识别常见 agent 启动命令并生成更可读的会话名称。
-- 优先使用终端发出的 title 更新 shell 名称，缺失时再回退到 agent 标签和首条消息摘要。
+- 优先使用终端发出的 title 更新 shell 名称；可选地仅对 Codex shell 启用 SideShell 自己的任务摘要标题，并保留 Codex 原始标题中的 spinner。
 - 解析 `OSC 133`、终端标题、`BEL`、`OSC 9` 等信号，给出 `running`、`waiting`、`error`、`exited` 和 attention 状态。
 - cwd 变化会同步到侧边栏，方便快速判断每个 shell 当前所在目录。
 
@@ -41,7 +41,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 
 - 项目列表、shell 元数据、cwd、激活项、侧边栏宽度和终端设置会保存到本地配置目录。
 - 应用重开后，shell 默认惰性恢复，只有真正点开时才创建 PTY。
-- 对识别到的 agent shell，会在首次打开时尝试执行对应的 resume / continue 命令。
+- 对识别到的 agent shell，会先保留 `继续会话 / 启动新会话 / 打开终端` 三选一；其中“继续会话”会进入对应 CLI 自己的 picker 或 session 列表。
 
 ### 终端设置
 
@@ -49,6 +49,7 @@ SideShell 是一个面向开发工作流的桌面终端壳。它把“项目”�
 - 可调整终端字体。
 - 可为新启动的 shell 注入额外环境变量。
 - 可配置 `BEL` / `OSC 9` 告警弹窗停留时长，默认 3 秒。
+- `BEL` / `OSC 9` 会同时触发应用内 toast 和桌面原生系统通知；在支持通知激活回传的平台上，点击通知后会回到对应 shell。
 
 ## 适合的场景
 
@@ -130,8 +131,9 @@ pnpm preview
 - Windows 下优先使用 `pwsh.exe`，不存在时回退到 `powershell.exe`。
 - macOS / Linux 下默认使用当前环境的 `$SHELL`，未设置时回退到 `/bin/bash`。
 - 恢复会话时，如果原 cwd 不存在，会回退到对应项目根目录。
-- agent shell 的恢复属于 best-effort 行为，依赖已保存的恢复目标或恢复命令。
+- agent shell 的恢复不再由 SideShell 直接定位某个具体 session，而是调用各 CLI 自己的恢复入口或 session 列表。
 - 本地状态文件保存在系统配置目录下的 `SideShell/sessions.json`。
+- 系统通知走 Tauri / Rust 原生桌面通知桥接，不依赖浏览器 `Notification` 权限；Windows 开发态是否真正弹出系统 toast 仍取决于系统通知环境。
 
 ## 目录结构
 

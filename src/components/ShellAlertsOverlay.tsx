@@ -1,9 +1,11 @@
 import { BellRing, X } from "lucide-react";
 import { dismissShellAlert, activateShellFromAlert } from "../shellAlerts";
 import { useShellAlertStore } from "../shellAlertStore";
+import { useI18n } from "../useI18n";
 import { cn } from "../utils";
 
 export function ShellAlertsOverlay() {
+  const { t } = useI18n();
   const alerts = useShellAlertStore((state) => state.alerts);
 
   if (alerts.length === 0) {
@@ -43,7 +45,7 @@ export function ShellAlertsOverlay() {
                 {alert.body}
               </div>
               <div className="mt-2 text-[10.5px] uppercase tracking-[0.16em] text-text-2">
-                Click to jump to shell
+                {t("alerts.overlay.jump")}
               </div>
             </div>
             <button
@@ -52,7 +54,7 @@ export function ShellAlertsOverlay() {
                 dismissShellAlert(alert.shellId);
               }}
               className="rounded-md p-1 text-text-2 transition hover:bg-bg-3 hover:text-text-0"
-              title="Dismiss alert"
+              title={t("alerts.overlay.dismiss")}
             >
               <X size={13} />
             </button>

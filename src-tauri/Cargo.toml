@@ -1,6 +1,6 @@
 [package]
 name = "sideshell"
-version = "0.6.0"
+version = "0.10.0"
 description = "SideShell - a modern cross-platform terminal with left-side project/shell tree"
 authors = ["SideShell"]
 edition = "2021"
@@ -29,12 +29,24 @@ base64 = "0.22"
 rusqlite = { version = "0.31", features = ["bundled"] }
 time = { version = "0.3", features = ["parsing"] }
 
+[target.'cfg(target_os = "windows")'.dependencies]
+winrt-toast-reborn = "0.3.8"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+notify-rust = "4.12.0"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+notify-rust = "4.12.0"
+
 [profile.release]
 panic = "abort"
 codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
+
+
+
 
 
 

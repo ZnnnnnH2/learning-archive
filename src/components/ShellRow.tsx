@@ -2,6 +2,8 @@ import { useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { TerminalSquare, X, Pencil, Copy, GitFork, Sparkles } from "lucide-react";
 import { useAppStore } from "../store";
+import type { Shell } from "../types";
+import { useI18n } from "../useI18n";
 import { StatusDot } from "./StatusDot";
 import { cn, shortenPath } from "../utils";
 
@@ -10,6 +12,7 @@ interface Props {
 }
 
 export function ShellRow({ shellId }: Props) {
+  const { t } = useI18n();
   const shell = useAppStore((s) => s.shells[shellId]);
   const activeShellId = useAppStore((s) => s.activeShellId);
   const setActive = useAppStore((s) => s.setActive);
@@ -33,6 +36,7 @@ export function ShellRow({ shellId }: Props) {
     shell.cwd && shell.cwd !== shell.initialCwd
       ? shortenPath(shell.cwd, 28)
       : null;
+  const secondaryPreview = getShellSecondaryPreview(shell, cwdShort);
 
   return (
     <ContextMenu.Root>
@@ -46,14 +50,19 @@ export function ShellRow({ shellId }: Props) {
           className={cn(
             "group flex items-center gap-1.5 px-1.5 py-1 rounded-md cursor-default select-none",
             "hover:bg-bg-2 transition-colors",
-            active && "bg-accent/15 hover:bg-accent/20"
+            active && "bg-accent/15 hover:bg-accent/20",
+            shell.lazyStart && !active && "bg-accent/[0.04]"
           )}
         >
           <TerminalSquare
             size={12}
             className={cn(
               "shrink-0",
-              active ? "text-accent" : "text-text-2"
+              active
+                ? "text-accent"
+                : shell.lazyStart
+                  ? "text-accent/80"
+                  : "text-text-2"
             )}
           />
           <div className="flex-1 min-w-0 flex flex-col leading-tight">
@@ -71,21 +80,28 @@ export function ShellRow({ shellId }: Props) {
                 className="bg-bg-3 text-[12px] px-1 py-0.5 rounded outline-none border border-accent/40 text-text-0"
               />
             ) : (
-              <span
-                className={cn(
-                  "truncate text-[12px]",
-                  active ? "text-text-0" : "text-text-1"
-                )}
-              >
-                {shell.name}
-              </span>
+              <div className="flex min-w-0 items-center gap-1.5">
+                <span
+                  className={cn(
+                    "min-w-0 truncate text-[12px]",
+                    active ? "text-text-0" : "text-text-1"
+                  )}
+                >
+                  {shell.name}
+                </span>
+                {shell.lazyStart ? (
+                  <span className="shrink-0 rounded-full border border-accent/30 bg-accent/10 px-1.5 py-0.5 text-[9.5px] font-medium uppercase tracking-[0.08em] text-accent">
+                    {t("shell.badge.pendingRestore")}
+                  </span>
+                ) : null}
+              </div>
             )}
-            {cwdShort && (
+            {secondaryPreview && (
               <span
                 className="truncate text-[10.5px] text-text-2"
-                title={shell.cwd}
+                title={secondaryPreview.title}
               >
-                {cwdShort}
+                {secondaryPreview.text}
               </span>
             )}
           </div>
@@ -99,7 +115,7 @@ export function ShellRow({ shellId }: Props) {
               removeShell(shellId);
             }}
             className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-bg-3 text-text-2 transition-opacity"
-            title="Close shell"
+            title={t("shell.closeShell")}
           >
             <X size={11} />
           </button>
@@ -111,7 +127,7 @@ export function ShellRow({ shellId }: Props) {
             className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"
             onSelect={() => cloneShell(shellId)}
           >
-            <GitFork size={13} /> Clone shell
+            <GitFork size={13} /> {t("shell.menu.cloneShell")}
           </ContextMenu.Item>
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"
@@ -120,29 +136,61 @@ export function ShellRow({ shellId }: Props) {
               setDraft(shell.name);
             }}
           >
-            <Pencil size={13} /> Rename
+            <Pencil size={13} /> {t("shell.menu.rename")}
           </ContextMenu.Item>
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"
             onSelect={() => useAutoShellName(shellId)}
           >
-            <Sparkles size={13} /> Use auto name
+            <Sparkles size={13} /> {t("shell.menu.useAutoName")}
           </ContextMenu.Item>
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bg-3 outline-none cursor-default flex items-center gap-2"
             onSelect={() => navigator.clipboard.writeText(shell.cwd)}
           >
-            <Copy size={13} /> Copy cwd
+            <Copy size={13} /> {t("shell.menu.copyCwd")}
           </ContextMenu.Item>
           <ContextMenu.Separator className="h-px bg-border my-1" />
           <ContextMenu.Item
             className="px-2 py-1.5 rounded hover:bg-bad/20 text-bad outline-none cursor-default flex items-center gap-2"
             onSelect={() => removeShell(shellId)}
           >
-            <X size={13} /> Close
+            <X size={13} /> {t("shell.menu.close")}
           </ContextMenu.Item>
         </ContextMenu.Content>
       </ContextMenu.Portal>
     </ContextMenu.Root>
   );
+}
+
+function getShellSecondaryPreview(
+  shell: Shell,
+  cwdShort: string | null
+): { text: string; title: string } | null {
+  const ignored = new Set(
+    [shell.name, shell.autoName]
+      .map((value) => normalizeText(value)?.toLowerCase() ?? "")
+      .filter(Boolean)
+  );
+
+  for (const candidate of [shell.taskSummary, shell.terminalTitle]) {
+    const normalized = normalizeText(candidate);
+    if (!normalized) continue;
+    if (ignored.has(normalized.toLowerCase())) continue;
+    return {
+      text: normalized,
+      title: normalized,
+    };
+  }
+
+  if (!cwdShort) return null;
+  return {
+    text: cwdShort,
+    title: shell.cwd,
+  };
+}
+
+function normalizeText(value: string | null | undefined): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized || null;
 }

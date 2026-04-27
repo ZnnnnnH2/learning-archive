@@ -1,7 +1,4 @@
-use crate::agent_restore::{
-    resolve_agent_restore_target as resolve_agent_restore_target_impl, AgentRestoreResolveRequest,
-    AgentRestoreResolveResult,
-};
+use crate::desktop_notifications::{DesktopNotificationService, ShellNotificationRequest};
 use crate::persist::{self, SessionState};
 use crate::pty::{spawn_session, PtyAttachSnapshot, PtyManager, PtySpawnOptions, SessionInfo};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
@@ -92,10 +89,19 @@ pub fn path_exists(path: String) -> bool {
 }
 
 #[tauri::command]
-pub fn resolve_agent_restore_target(
-    request: AgentRestoreResolveRequest,
-) -> Result<Option<AgentRestoreResolveResult>, String> {
-    resolve_agent_restore_target_impl(request)
+pub fn send_shell_notification(
+    notifications: State<DesktopNotificationService>,
+    notification: ShellNotificationRequest,
+) -> Result<(), String> {
+    notifications.show(notification)
+}
+
+#[tauri::command]
+pub fn close_shell_notification(
+    notifications: State<DesktopNotificationService>,
+    tag: String,
+) -> Result<(), String> {
+    notifications.close(tag)
 }
 
 fn validate_directory(path: &str) -> Result<&Path, String> {
