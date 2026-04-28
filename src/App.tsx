@@ -1,9 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import { getCurrent, onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { primeAlertSound } from "./alertSound";
 import { ShellAlertsOverlay } from "./components/ShellAlertsOverlay";
 import { Sidebar } from "./components/Sidebar";
 import { TerminalHost } from "./components/TerminalHost";
 import { loadPersistedState, onShellNotificationActivated } from "./ipc";
+import { getShellAlertTagFromDeepLink } from "./notificationDeepLinks";
 import { matchShortcutAction } from "./shortcuts";
 import { activateShellAlertByTag } from "./shellAlerts";
 import { useI18n } from "./useI18n";
@@ -24,6 +26,33 @@ export default function App() {
   const removeShell = useAppStore((s) => s.removeShell);
   const setActive = useAppStore((s) => s.setActive);
   const shortcutKeymap = useAppStore((s) => s.terminalSettings.shortcutKeymap);
+  const queueOrActivateNotificationTag = useCallback((tag: string) => {
+    if (!useAppStore.getState().hydrated) {
+      pendingNotificationTagsRef.current.push(tag);
+      return;
+    }
+    void activateShellAlertByTag(tag);
+  }, []);
+
+  const queueOrActivateDeepLinkUrls = useCallback(
+    (urls: string[] | null) => {
+      if (!urls) {
+        return;
+      }
+
+      for (const rawUrl of urls) {
+        const tag = getShellAlertTagFromDeepLink(rawUrl);
+        if (!tag) {
+          if (import.meta.env.DEV) {
+            console.debug("ignored deep link", { rawUrl });
+          }
+          continue;
+        }
+        queueOrActivateNotificationTag(tag);
+      }
+    },
+    [queueOrActivateNotificationTag]
+  );
 
   useEffect(() => {
     primeAlertSound();
@@ -41,11 +70,7 @@ export default function App() {
       if (import.meta.env.DEV) {
         console.debug("shell notification activated", { tag: event.tag });
       }
-      if (!useAppStore.getState().hydrated) {
-        pendingNotificationTagsRef.current.push(event.tag);
-        return;
-      }
-      void activateShellAlertByTag(event.tag);
+      queueOrActivateNotificationTag(event.tag);
     })
       .then((cleanup) => {
         if (disposed) {
@@ -62,7 +87,41 @@ export default function App() {
       disposed = true;
       unlisten?.();
     };
-  }, []);
+  }, [queueOrActivateNotificationTag]);
+
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+
+    getCurrent()
+      .then((urls) => {
+        if (!disposed) {
+          queueOrActivateDeepLinkUrls(urls);
+        }
+      })
+      .catch((error) => {
+        console.warn("failed to read current deep links", error);
+      });
+
+    onOpenUrl((urls) => {
+      queueOrActivateDeepLinkUrls(urls);
+    })
+      .then((cleanup) => {
+        if (disposed) {
+          cleanup();
+          return;
+        }
+        unlisten = cleanup;
+      })
+      .catch((error) => {
+        console.warn("failed to listen for deep links", error);
+      });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [queueOrActivateDeepLinkUrls]);
 
   useEffect(() => {
     if (!hydrated || pendingNotificationTagsRef.current.length === 0) {

@@ -74,7 +74,7 @@ fn run_notification_worker(app: AppHandle, receiver: Receiver<NotificationComman
     }
 }
 
-fn emit_shell_notification_activated(app: &AppHandle, tag: String) {
+pub fn emit_shell_notification_activated(app: &AppHandle, tag: String) {
     let _ = app.emit(
         SHELL_ALERT_ACTIVATED_EVENT,
         ShellNotificationActivatedPayload { tag },
@@ -118,13 +118,27 @@ impl PlatformNotifier {
 #[cfg(target_os = "windows")]
 mod windows {
     use super::{emit_shell_notification_activated, AppHandle, HashMap, ShellNotificationRequest};
-    use winrt_toast_reborn::{register, Toast, ToastDuration, ToastManager};
+    use windows::{
+        core::{IInspectable, Ref, HSTRING},
+        Data::Xml::Dom::XmlDocument,
+        Foundation::TypedEventHandler,
+        UI::Notifications::{ToastFailedEventArgs, ToastNotification, ToastNotificationManager},
+    };
+    use winrt_toast_reborn::url::form_urlencoded;
+    use winrt_toast_reborn::{register, ToastManager};
 
+    const SHELL_ALERT_PROTOCOL: &str = "sideshell";
+    const SHELL_ALERT_ROUTE: &str = "shell-alert";
     const WINDOWS_TOAST_GROUP: &str = "sideshell-shell-alerts";
+
+    struct ActiveToast {
+        _activated: TypedEventHandler<ToastNotification, IInspectable>,
+        _failed: TypedEventHandler<ToastNotification, ToastFailedEventArgs>,
+    }
 
     pub struct WindowsNotifier {
         app: AppHandle,
-        active: HashMap<String, ToastManager>,
+        active: HashMap<String, ActiveToast>,
         aumid: String,
     }
 
@@ -152,31 +166,60 @@ mod windows {
 
             let app = self.app.clone();
             let tag = request.tag.clone();
-            let manager = ToastManager::new(&self.aumid)
-                .on_activated(None, move |_action| {
-                    emit_shell_notification_activated(&app, tag.clone());
-                })
-                .on_dismissed(|_| {})
-                .on_failed(|error| {
-                    eprintln!("Windows toast callback error: {error:?}");
-                });
+            let activation_url = build_shell_alert_activation_url(&request.tag);
+            let toast_xml = build_shell_alert_toast_xml(request, &activation_url);
 
-            let mut toast = Toast::new();
+            let toast_doc = XmlDocument::new()
+                .map_err(|error| format!("failed to create Windows toast XML: {error}"))?;
+            toast_doc
+                .LoadXml(&HSTRING::from(toast_xml))
+                .map_err(|error| format!("failed to load Windows toast XML: {error}"))?;
+
+            let toast = ToastNotification::CreateToastNotification(&toast_doc)
+                .map_err(|error| format!("failed to create Windows toast: {error}"))?;
             toast
-                .text1(&request.title)
-                .text2(&request.body)
-                .tag(&request.tag)
-                .group(WINDOWS_TOAST_GROUP)
-                .launch(&request.tag)
-                .duration(match request.timeout_ms.unwrap_or(3000) {
-                    0..=5000 => ToastDuration::Short,
-                    _ => ToastDuration::Long,
-                });
+                .SetGroup(&HSTRING::from(WINDOWS_TOAST_GROUP))
+                .map_err(|error| format!("failed to set Windows toast group: {error}"))?;
+            toast
+                .SetTag(&HSTRING::from(&request.tag))
+                .map_err(|error| format!("failed to set Windows toast tag: {error}"))?;
 
-            manager
-                .show(&toast)
+            let activated = TypedEventHandler::new(
+                move |_toast: Ref<'_, ToastNotification>, _args: Ref<'_, IInspectable>| {
+                    emit_shell_notification_activated(&app, tag.clone());
+                    Ok(())
+                },
+            );
+            let failed_tag = request.tag.clone();
+            let failed = TypedEventHandler::new(
+                move |_toast: Ref<'_, ToastNotification>, args: Ref<'_, ToastFailedEventArgs>| {
+                    let error_code = args.as_ref().and_then(|args| args.ErrorCode().ok());
+                    eprintln!("Windows toast callback error for {failed_tag}: {error_code:?}");
+                    Ok(())
+                },
+            );
+
+            toast
+                .Activated(&activated)
+                .map_err(|error| format!("failed to attach Windows toast activation: {error}"))?;
+            toast.Failed(&failed).map_err(|error| {
+                format!("failed to attach Windows toast failure handler: {error}")
+            })?;
+
+            let notifier =
+                ToastNotificationManager::CreateToastNotifierWithId(&HSTRING::from(&self.aumid))
+                    .map_err(|error| format!("failed to create Windows toast notifier: {error}"))?;
+            notifier
+                .Show(&toast)
                 .map_err(|error| format!("failed to show Windows toast: {error}"))?;
-            self.active.insert(request.tag.clone(), manager);
+
+            self.active.insert(
+                request.tag.clone(),
+                ActiveToast {
+                    _activated: activated,
+                    _failed: failed,
+                },
+            );
             Ok(())
         }
 
@@ -186,18 +229,54 @@ mod windows {
                 return Ok(());
             }
 
-            if let Some(manager) = self.active.remove(normalized_tag) {
-                manager
-                    .remove_grouped_tag(WINDOWS_TOAST_GROUP, normalized_tag)
-                    .map_err(|error| format!("failed to remove Windows toast: {error}"))?;
-                return Ok(());
-            }
-
-            let manager = ToastManager::new(&self.aumid);
-            manager
-                .remove_grouped_tag(WINDOWS_TOAST_GROUP, normalized_tag)
+            self.active.remove(normalized_tag);
+            ToastNotificationManager::History()
+                .map_err(|error| format!("failed to open Windows toast history: {error}"))?
+                .RemoveGroupedTagWithId(
+                    &HSTRING::from(normalized_tag),
+                    &HSTRING::from(WINDOWS_TOAST_GROUP),
+                    &HSTRING::from(&self.aumid),
+                )
                 .map_err(|error| format!("failed to remove Windows toast: {error}"))
         }
+    }
+
+    fn build_shell_alert_activation_url(tag: &str) -> String {
+        let encoded_tag: String = form_urlencoded::byte_serialize(tag.as_bytes()).collect();
+        format!("{SHELL_ALERT_PROTOCOL}://{SHELL_ALERT_ROUTE}?tag={encoded_tag}")
+    }
+
+    fn build_shell_alert_toast_xml(
+        request: &ShellNotificationRequest,
+        activation_url: &str,
+    ) -> String {
+        let duration = match request.timeout_ms.unwrap_or(3000) {
+            0..=5000 => "short",
+            _ => "long",
+        };
+
+        format!(
+            "<toast activationType=\"protocol\" launch=\"{}\" duration=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual></toast>",
+            xml_escape(activation_url),
+            duration,
+            xml_escape(&request.title),
+            xml_escape(&request.body),
+        )
+    }
+
+    fn xml_escape(value: &str) -> String {
+        let mut escaped = String::with_capacity(value.len());
+        for ch in value.chars() {
+            match ch {
+                '&' => escaped.push_str("&amp;"),
+                '<' => escaped.push_str("&lt;"),
+                '>' => escaped.push_str("&gt;"),
+                '"' => escaped.push_str("&quot;"),
+                '\'' => escaped.push_str("&apos;"),
+                _ => escaped.push(ch),
+            }
+        }
+        escaped
     }
 }
 

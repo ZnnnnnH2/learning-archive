@@ -11,7 +11,7 @@ import { translate } from "./i18n";
 
 const ALERT_SOUND_THROTTLE_MS = 800;
 const lastAlertSoundAt = new Map<string, number>();
-const SHELL_ALERT_TAG_PREFIX = "sideshell-shell-";
+export const SHELL_ALERT_TAG_PREFIX = "sideshell-shell-";
 
 function logShellAlertDebug(message: string, data: Record<string, unknown>) {
   if (import.meta.env.DEV) {
@@ -23,9 +23,13 @@ function getShellAlertTag(shellId: string): string {
   return `${SHELL_ALERT_TAG_PREFIX}${shellId}`;
 }
 
+export function isShellAlertTag(tag: string): boolean {
+  return tag.trim().startsWith(SHELL_ALERT_TAG_PREFIX);
+}
+
 function getShellIdFromAlertTag(tag: string): string | null {
   const normalizedTag = tag.trim();
-  if (!normalizedTag.startsWith(SHELL_ALERT_TAG_PREFIX)) {
+  if (!isShellAlertTag(normalizedTag)) {
     return null;
   }
 

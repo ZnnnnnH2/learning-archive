@@ -25,6 +25,13 @@
       "csp": null
     }
   },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["sideshell"]
+      }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": [

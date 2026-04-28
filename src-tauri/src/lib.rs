@@ -14,7 +14,27 @@ pub fn run() {
     let manager = Arc::new(PtyManager::new());
     let kill_all_manager = manager.clone();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+
+            for arg in _argv {
+                if let Some(tag) = shell_alert_tag_from_deep_link(&arg) {
+                    desktop_notifications::emit_shell_notification_activated(app, tag);
+                }
+            }
+        }));
+    }
+
+    builder
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(manager)
@@ -44,4 +64,47 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn shell_alert_tag_from_deep_link(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    let query = trimmed.strip_prefix("sideshell://shell-alert?")?;
+    for pair in query.split('&') {
+        let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if key != "tag" {
+            continue;
+        }
+
+        let tag = percent_decode_query_value(value)?;
+        if tag.starts_with("sideshell-shell-") {
+            return Some(tag);
+        }
+    }
+    None
+}
+
+fn percent_decode_query_value(value: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(value.len());
+    let mut chars = value.as_bytes().iter().copied();
+    while let Some(byte) = chars.next() {
+        match byte {
+            b'+' => bytes.push(b' '),
+            b'%' => {
+                let high = chars.next()?;
+                let low = chars.next()?;
+                bytes.push((hex_value(high)? << 4) | hex_value(low)?);
+            }
+            _ => bytes.push(byte),
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
