@@ -37,6 +37,11 @@ export const SHORTCUT_ACTIONS: ShortcutActionDefinition[] = [
     defaultBindings: ["Ctrl+Shift+V", "Shift+Insert"],
   },
   {
+    id: "terminal.scrollToBottom",
+    scope: "terminal",
+    defaultBindings: ["Ctrl+End"],
+  },
+  {
     id: "app.toggleSidebar",
     scope: "app",
     defaultBindings: ["Mod+B"],

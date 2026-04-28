@@ -1,8 +1,9 @@
-import { memo, useEffect, useLayoutEffect, useRef } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { ArrowDownToLine } from "lucide-react";
 import {
   consumeTypedInputBuffer,
   detectAgentLaunchFromCommand,
@@ -85,6 +86,7 @@ function TerminalViewComponent({ shell, active }: Props) {
   const queuedWriteBytesRef = useRef(0);
   const disposedRef = useRef(false);
   const typedInputRef = useRef("");
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
   const shortcutKeymapRef = useRef<ShortcutKeymap>(
     useAppStore.getState().terminalSettings.shortcutKeymap
   );
@@ -122,6 +124,23 @@ function TerminalViewComponent({ shell, active }: Props) {
     }
     queuedWriteChunksRef.current = [];
     queuedWriteBytesRef.current = 0;
+  };
+
+  const syncScrollToBottomVisibility = () => {
+    if (disposedRef.current) return;
+    const buffer = termRef.current?.buffer.active;
+    const nextVisible = Boolean(buffer && buffer.viewportY < buffer.baseY);
+    setShowScrollToBottom((current) =>
+      current === nextVisible ? current : nextVisible
+    );
+  };
+
+  const scrollToBottom = () => {
+    const term = termRef.current;
+    if (!term) return;
+    term.scrollToBottom();
+    term.focus();
+    setShowScrollToBottom(false);
   };
 
   const trackAgentLaunch = (line: string) => {
@@ -280,6 +299,9 @@ function TerminalViewComponent({ shell, active }: Props) {
     const onBell = term.onBell(() => {
       markAttention();
     });
+    const onScroll = term.onScroll(() => {
+      syncScrollToBottomVisibility();
+    });
     const onTitleChange = term.onTitleChange((title) => {
       const currentShell = useAppStore.getState().shells[shell.id];
       setShellTerminalTitle(shell.id, title);
@@ -338,7 +360,7 @@ function TerminalViewComponent({ shell, active }: Props) {
         queuedWriteBytesRef.current = 0;
       }
 
-      term.write(bytesToWrite);
+      term.write(bytesToWrite, syncScrollToBottomVisibility);
     };
 
     const scheduleTerminalWrite = (bytes: Uint8Array) => {
@@ -476,6 +498,7 @@ function TerminalViewComponent({ shell, active }: Props) {
       disposedRef.current = true;
       ro.disconnect();
       onBell.dispose();
+      onScroll.dispose();
       onTitleChange.dispose();
       onInput.dispose();
       unlistenData?.();
@@ -516,6 +539,7 @@ function TerminalViewComponent({ shell, active }: Props) {
       try {
         fitRef.current?.fit();
         termRef.current?.focus();
+        syncScrollToBottomVisibility();
       } catch {}
       const t = termRef.current;
       const sid = sessionIdRef.current;
@@ -528,6 +552,8 @@ function TerminalViewComponent({ shell, active }: Props) {
     if (shell.needsAttention) setShellAttention(shell.id, false);
   }, [active, shell.id, shell.needsAttention, setShellAttention, setShellSize]);
 
+  const scrollToBottomLabel = translate(locale, "terminal.scrollToBottom");
+
   return (
     <div
       className="absolute inset-0 px-2.5 pt-2 pb-2"
@@ -538,6 +564,17 @@ function TerminalViewComponent({ shell, active }: Props) {
       }}
     >
       <div ref={hostRef} className="xterm-host w-full h-full" />
+      {active && showScrollToBottom ? (
+        <button
+          type="button"
+          onClick={scrollToBottom}
+          className="no-drag absolute bottom-4 right-5 z-20 inline-flex h-9 w-9 items-center justify-center rounded-md border border-border-strong bg-bg-2/95 text-text-1 shadow-lg shadow-black/30 backdrop-blur transition hover:bg-bg-3 hover:text-text-0"
+          title={scrollToBottomLabel}
+          aria-label={scrollToBottomLabel}
+        >
+          <ArrowDownToLine size={16} />
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -576,6 +613,12 @@ function handleTerminalShortcut(
           console.warn("terminal paste failed", error);
         });
     }
+    return false;
+  }
+
+  if (actionId === "terminal.scrollToBottom") {
+    term.scrollToBottom();
+    term.focus();
     return false;
   }
 

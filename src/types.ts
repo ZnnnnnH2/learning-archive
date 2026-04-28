@@ -16,6 +16,7 @@ export type RestoreDefaultsByAgent = Partial<
 export type ShortcutActionId =
   | "terminal.copySelection"
   | "terminal.pasteClipboard"
+  | "terminal.scrollToBottom"
   | "app.toggleSidebar"
   | "app.newShell"
   | "app.cloneShell"

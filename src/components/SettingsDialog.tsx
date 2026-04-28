@@ -419,6 +419,8 @@ function getShortcutActionLabel(
       return t("settings.shortcuts.action.terminal.copySelection");
     case "terminal.pasteClipboard":
       return t("settings.shortcuts.action.terminal.pasteClipboard");
+    case "terminal.scrollToBottom":
+      return t("settings.shortcuts.action.terminal.scrollToBottom");
     case "app.toggleSidebar":
       return t("settings.shortcuts.action.app.toggleSidebar");
     case "app.newShell":

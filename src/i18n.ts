@@ -104,6 +104,7 @@ const EN_MESSAGES = {
   "settings.shortcuts.empty": "No shortcut",
   "settings.shortcuts.action.terminal.copySelection": "Copy terminal selection",
   "settings.shortcuts.action.terminal.pasteClipboard": "Paste clipboard",
+  "settings.shortcuts.action.terminal.scrollToBottom": "Scroll terminal to bottom",
   "settings.shortcuts.action.app.toggleSidebar": "Toggle sidebar",
   "settings.shortcuts.action.app.newShell": "New shell",
   "settings.shortcuts.action.app.cloneShell": "Clone shell",
@@ -129,6 +130,7 @@ const EN_MESSAGES = {
   "alerts.defaultBody": "{shellName} in {projectName} needs attention.",
   "alerts.overlay.jump": "Click to jump to shell",
   "alerts.overlay.dismiss": "Dismiss alert",
+  "terminal.scrollToBottom": "Scroll to bottom",
   "terminal.startFailed": "[SideShell] Failed to start shell.",
 } as const;
 
@@ -238,6 +240,7 @@ const ZH_CN_MESSAGES: Record<MessageKey, string> = {
   "settings.shortcuts.empty": "未设置快捷键",
   "settings.shortcuts.action.terminal.copySelection": "复制终端选区",
   "settings.shortcuts.action.terminal.pasteClipboard": "粘贴剪贴板",
+  "settings.shortcuts.action.terminal.scrollToBottom": "滚动终端到底部",
   "settings.shortcuts.action.app.toggleSidebar": "显示或隐藏侧边栏",
   "settings.shortcuts.action.app.newShell": "新建 shell",
   "settings.shortcuts.action.app.cloneShell": "克隆 shell",
@@ -263,6 +266,7 @@ const ZH_CN_MESSAGES: Record<MessageKey, string> = {
   "alerts.defaultBody": "{projectName} 中的 {shellName} 需要关注。",
   "alerts.overlay.jump": "点击跳转到该 shell",
   "alerts.overlay.dismiss": "关闭告警",
+  "terminal.scrollToBottom": "滚动到底部",
   "terminal.startFailed": "[SideShell] 启动 shell 失败。",
 };
 
