@@ -13,6 +13,11 @@ import {
   DEFAULT_TERMINAL_SETTINGS,
   normalizeTerminalSettings,
 } from "./terminalConfig";
+import {
+  normalizeActivityTimestamp,
+  sortProjectsByActivityDay,
+  sortShellIdsByActivityDay,
+} from "./activityOrdering";
 import { areShortcutKeymapsEqual } from "./shortcuts";
 import { AGENT_KINDS } from "./types";
 import type {
@@ -89,6 +94,10 @@ interface AppState {
 
 const DEFAULT_SIDEBAR_WIDTH = 268;
 
+function currentActivityTime(): number {
+  return Date.now();
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   projects: {},
   projectOrder: [],
@@ -101,8 +110,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   addProject: (path, name) => {
     const id = newId();
+    const updatedAt = currentActivityTime();
     const project: Project = {
       id,
+      updatedAt,
       name: name || basename(path) || path,
       path,
       expanded: true,
@@ -149,7 +160,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const p = s.projects[id];
       if (!p) return {};
-      return { projects: { ...s.projects, [id]: { ...p, name } } };
+      if (p.name === name) return {};
+      return {
+        projects: {
+          ...s.projects,
+          [id]: { ...p, name, updatedAt: currentActivityTime() },
+        },
+      };
     });
     get().persist();
   },
@@ -173,11 +190,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const project = get().projects[projectId];
     if (!project) throw new Error("project not found: " + projectId);
     const id = newId();
+    const updatedAt = currentActivityTime();
     const cwd = opts?.cwd ?? project.path;
     const idx = project.shellIds.length + 1;
     const autoName = opts?.name ?? buildDefaultShellName(idx);
     const shell: Shell = {
       id,
+      updatedAt,
       sessionId: null,
       projectId,
       name: autoName,
@@ -205,6 +224,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...s.projects,
         [projectId]: {
           ...project,
+          updatedAt,
           expanded: true,
           shellIds: [...project.shellIds, id],
         },
@@ -229,6 +249,7 @@ export const useAppStore = create<AppState>((set, get) => ({
             ...s.projects,
             [sh.projectId]: {
               ...proj,
+              updatedAt: currentActivityTime(),
               shellIds: proj.shellIds.filter((x) => x !== id),
             },
           }
@@ -250,10 +271,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const sh = s.shells[id];
       if (!sh) return {};
+      if (sh.name === name && sh.nameMode === "manual") return {};
       return {
         shells: {
           ...s.shells,
-          [id]: { ...sh, name, nameMode: "manual" },
+          [id]: {
+            ...sh,
+            name,
+            nameMode: "manual",
+            updatedAt: currentActivityTime(),
+          },
         },
       };
     });
@@ -281,6 +308,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           startupCommand: null,
           taskSummary: null,
           terminalTitle: null,
+          updatedAt: currentActivityTime(),
         },
         s.sidebarWidth,
         s.terminalSettings.codexUseSelfSummaryTitle
@@ -323,6 +351,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       const nextShellBase: Shell = {
         ...sh,
+        updatedAt: currentActivityTime(),
         lazyStart: false,
         startupCommand: null,
       };
@@ -395,6 +424,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         {
           ...sh,
           terminalTitle: nextTitle,
+          updatedAt: currentActivityTime(),
         },
         s.sidebarWidth,
         s.terminalSettings.codexUseSelfSummaryTitle
@@ -421,6 +451,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         {
           ...sh,
           taskSummary: nextMessage,
+          updatedAt: currentActivityTime(),
         },
         s.sidebarWidth,
         s.terminalSettings.codexUseSelfSummaryTitle
@@ -441,10 +472,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       const sh = s.shells[id];
       const nextName = sh?.autoName?.trim();
       if (!sh || !nextName) return {};
+      if (sh.name === nextName && sh.nameMode === "auto") return {};
       return {
         shells: {
           ...s.shells,
-          [id]: { ...sh, name: nextName, nameMode: "auto" },
+          [id]: {
+            ...sh,
+            name: nextName,
+            nameMode: "auto",
+            updatedAt: currentActivityTime(),
+          },
         },
       };
     });
@@ -480,7 +517,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set((s) => {
       const sh = s.shells[id];
       if (!sh || sh.cwd === cwd) return {};
-      return { shells: { ...s.shells, [id]: { ...sh, cwd } } };
+      return {
+        shells: {
+          ...s.shells,
+          [id]: { ...sh, cwd, updatedAt: currentActivityTime() },
+        },
+      };
     });
     get().persist();
   },
@@ -513,6 +555,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...s.shells,
           [id]: {
             ...sh,
+            updatedAt: currentActivityTime(),
             sessionId: null,
             lazyStart: false,
             lastExitCode: code,
@@ -521,6 +564,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         },
       };
     });
+    get().persist();
   },
 
   reorderShells: (projectId, order) => {
@@ -673,6 +717,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const hydratedShell = syncShellAutoName(
           {
             id: s.id,
+            updatedAt: normalizeActivityTimestamp(s.updatedAt),
             sessionId: null,
             projectId: p.id,
             name: s.name,
@@ -707,23 +752,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       projects[p.id] = {
         id: p.id,
+        updatedAt: normalizeActivityTimestamp(p.updatedAt),
         name: p.name,
         path: p.path,
         expanded: true,
-        shellIds,
+        shellIds: sortShellIdsByActivityDay(shellIds, shells),
       };
       projectOrder.push(p.id);
     }
+    const sortedProjectOrder = sortProjectsByActivityDay(
+      projectOrder,
+      projects,
+      shells
+    );
     const active =
       (state.activeShellId && shells[state.activeShellId]?.id) ||
-      projectOrder
+      sortedProjectOrder
         .map((pid) => projects[pid].shellIds[0])
         .find(Boolean) ||
       null;
     set({
       projects,
       shells,
-      projectOrder,
+      projectOrder: sortedProjectOrder,
       activeShellId: active,
       sidebarWidth,
       terminalSettings,
@@ -739,12 +790,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         const p = s.projects[pid];
         return {
           id: p.id,
+          updatedAt: p.updatedAt,
           name: p.name,
           path: p.path,
           shells: p.shellIds.map((sid) => {
             const sh = s.shells[sid];
             return {
               id: sh.id,
+              updatedAt: sh.updatedAt,
               name: sh.name,
               autoName: sh.autoName,
               nameMode: sh.nameMode,

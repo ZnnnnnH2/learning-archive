@@ -12,6 +12,8 @@ pub struct RestoreTargetRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ShellRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auto_name: Option<String>,
@@ -58,6 +60,8 @@ pub struct ShellRecord {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectRecord {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<i64>,
     pub name: String,
     pub path: String,
     #[serde(default)]

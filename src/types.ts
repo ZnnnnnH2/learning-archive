@@ -55,6 +55,7 @@ export interface PersistedRestoreTarget {
 
 export interface Shell {
   id: string;
+  updatedAt?: number;
   sessionId: string | null;
   projectId: string;
   name: string;
@@ -79,6 +80,7 @@ export interface Shell {
 
 export interface Project {
   id: string;
+  updatedAt?: number;
   name: string;
   path: string;
   expanded: boolean;
@@ -87,6 +89,7 @@ export interface Project {
 
 export interface PersistedShell {
   id: string;
+  updatedAt?: number | null;
   name: string;
   autoName?: string | null;
   nameMode?: string | null;
@@ -113,6 +116,7 @@ export interface PersistedShell {
 
 export interface PersistedProject {
   id: string;
+  updatedAt?: number | null;
   name: string;
   path: string;
   shells: PersistedShell[];
