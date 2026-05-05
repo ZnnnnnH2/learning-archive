@@ -36,7 +36,7 @@ The CUA agent operates inside a **Docker container** (`trycua/cua-xfce`), which 
 │  │  │  Agent actions run HERE │  │  │
 │  │  └─────────────────────────┘  │  │
 │  └───────────────────────────────┘  │
-│  PyQt6 UI + LLM (host-side)        │
+│  PyQt6 UI + model API client       │
 └─────────────────────────────────────┘
 ```
 
@@ -53,8 +53,7 @@ The CUA agent operates inside a **Docker container** (`trycua/cua-xfce`), which 
 | **Step Limit** | Maximum number of steps per command is enforced (`MAX_STEPS`, default: 20) |
 | **Input Sanitization** | User commands are sanitized before being passed to the LLM |
 | **Plan Verification** | Each plan step is verified against success criteria using the vision model before advancing |
-| **GPU Conflict Prevention** | Auto GPU detection prevents loading two models on the same GPU (avoids CUDA double-free crashes) |
-| **Model File Validation** | Local model file paths are validated for existence and `.gguf` extension before loading |
+| **API-only Model Boundary** | Model calls go through a configured OpenAI-compatible HTTPS endpoint instead of local model loading |
 
 ## Known Security Considerations
 
@@ -77,24 +76,11 @@ The agent uses a vision-language model to interpret screenshots and decide actio
 - The VNC server inside the container is also bound to localhost.
 - **Recommendation:** Do not change port bindings to `0.0.0.0` in production environments.
 
-### ⚠️ Model Files
+### ⚠️ Model API Credentials
 
-- The GGUF model is downloaded from HuggingFace on first run. Always verify you are downloading from the intended repository.
-- Local model file paths specified via the GUI file browser are validated for existence and `.gguf` extension.
-- **Recommendation:** Check the model repository URL in `src/config.py` before first run. Only load models from trusted sources.
-
-### ⚠️ Local Model File Browser
-
-- The GUI file browser (`📂 Browse` button) allows selecting local `.gguf` files. The selected path is stored in `PLANNER_GGUF_LOCAL_PATH`.
-- **Risk:** A user could select a malicious or corrupted model file.
-- **Mitigation:** Only `.gguf` files are accepted; the file dialog filters by extension.
-- **Recommendation:** Only load models from trusted sources. Verify model integrity with checksums when possible.
-
-### ⚠️ Auto GPU Layer Detection
-
-- The auto GPU detection feature runs `nvidia-smi` via subprocess to query available VRAM.
-- **Risk:** Minimal; `nvidia-smi` is a standard NVIDIA tool with read-only access.
-- **Mitigation:** Subprocess call uses a 5-second timeout and captures output only (`capture_output=True`).
+- `MODEL_API_KEY` is used from the environment or GUI runtime state.
+- **Risk:** The configured provider receives screenshots and task prompts.
+- **Recommendation:** Use a trusted OpenAI-compatible provider, scope API keys tightly when possible, and avoid sending sensitive screens.
 
 ## Best Practices
 
@@ -113,9 +99,6 @@ Key dependencies and their security considerations:
 | Package | Purpose | Trust Level |
 |---------|---------|-------------|
 | `PyQt6` | GUI framework | High (Qt Company) |
-| `llama-cpp-python` | LLM inference (executor & planner) | Medium (community fork with CUDA) |
-| `transformers` | Translation model | High (Hugging Face) |
-| `huggingface_hub` | Model downloading | High (Hugging Face) |
 | `Pillow` | Image processing | High (PSF) |
 | `requests` | HTTP client | High (PSF) |
 | `docker` (runtime) | Container runtime | High (Docker Inc.) |

@@ -162,6 +162,8 @@ cython_debug/
 # ── Project-specific ──
 # Runtime screenshots
 img/*.png
+.tmp/
+.uv-cache-local/
 
 # Model files
 *.gguf

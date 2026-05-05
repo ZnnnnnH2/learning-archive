@@ -22,12 +22,6 @@ from src.llm_client import load_llm, ask_next_action
 from src.vision import capture_screen, capture_screen_raw, draw_preview
 from src.guards import validate_xy, should_stop_on_repeat
 from src.actions import execute_action
-from transformers import MarianMTModel, MarianTokenizer
-
-
-model_name = "Helsinki-NLP/opus-mt-tc-big-tr-en"
-tokenizer = MarianTokenizer.from_pretrained(model_name)
-model = MarianMTModel.from_pretrained(model_name)
 
 # ----------------------------
 # Agent core (runs inside GUI, no need for main.py)
@@ -513,12 +507,6 @@ class AgentWindow(QMainWindow):
 
     def _on_run(self):
         objective = self.cmd_input.text().strip()
-        translated = model.generate(**tokenizer(objective, return_tensors="pt", padding=True))
-        for t in translated:
-            print( tokenizer.decode(t, skip_special_tokens=True) )
-
-        objective=tokenizer.decode(t, skip_special_tokens=True)
-        print(f"User question translated: {objective}")
         if not objective:
             self._append_log("[GUI] Command cannot be empty.")
             return

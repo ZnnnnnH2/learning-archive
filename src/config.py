@@ -1,45 +1,46 @@
 import re
+import os
 from dataclasses import dataclass
 from typing import Tuple
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.getenv(name, str(default)))
+    except ValueError:
+        return default
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except ValueError:
+        return default
 
 @dataclass
 class CFG:
     # ----------------------
-    # LLM Model config
+    # OpenAI-compatible model API
     # ----------------------
-    GGUF_REPO_ID: str = "mradermacher/Qwen3-VL-8B-Instruct-abliterated-v2.0-GGUF"
-    GGUF_MODEL_FILENAME: str = "Qwen3-VL-8B-Instruct-abliterated-v2.0.Q5_K_S.gguf"
-    GGUF_MMPROJ_FILENAME: str = "Qwen3-VL-8B-Instruct-abliterated-v2.0.mmproj-f16.gguf"
+    MODEL_API_BASE_URL: str = os.getenv(
+        "MODEL_API_BASE_URL",
+        "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    )
+    MODEL_API_KEY: str = os.getenv("MODEL_API_KEY", "")
+    VISION_MODEL: str = os.getenv("VISION_MODEL", "qwen-vl-max")
+    PLANNER_MODEL: str = os.getenv("PLANNER_MODEL", "qwen-plus")
+    MODEL_API_TIMEOUT: float = _env_float("MODEL_API_TIMEOUT", 60.0)
+    PLANNER_MAX_TOKENS: int = _env_int("PLANNER_MAX_TOKENS", 1024)
 
     # ----------------------
-    # Planning LLM (API-based)
+    # Planning LLM
     # ----------------------
-    PLANNER_PROVIDER: str = "openrouter"       # openrouter | openai | local
-    PLANNER_API_KEY: str = ""                  # set via UI or env var
-    PLANNER_MODEL: str = ""
-    PLANNER_MAX_TOKENS: int = 1024
+    PLANNER_PROVIDER: str = "api"
 
     # ----------------------
     # Hierarchical Planning Mode
     # ----------------------
     USE_PLANNER: bool = True                  # Enable Plan→Execute→Verify loop
 
-    # Local GGUF planner (text-only model)
-    PLANNER_GGUF_REPO_ID: str = ""             # HF repo for planner GGUF
-    PLANNER_GGUF_MODEL_FILENAME: str = ""      # GGUF filename
-    PLANNER_GGUF_LOCAL_PATH: str = ""          # Direct path to local .gguf file
-    PLANNER_N_CTX: int = 4096                  # Planner context window
-    PLANNER_N_THREADS: int = 8                 # Planner CPU threads
-    PLANNER_N_GPU_LAYERS: int = -1             # -1 = auto (detect optimal), 0=CPU only
     PLANNER_MAX_REPLAN: int = 2                # Max replan attempts per objective
-
-    # Llama runtime
-    N_CTX: int = 2048
-    N_THREADS: int = 12
-    N_GPU_LAYERS: int = -1
-    N_BATCH: int = 32
-
-    FORCE_REASONING: bool = False
 
     # Repeat guard
     STOP_ON_REPEAT: bool = True
@@ -49,8 +50,6 @@ class CFG:
 
     # Open VM screen as a separate window
     OPEN_VNC_VIEWER: bool = True
-    IMAGE_MIN_TOKENS: int = 1024
-
     # ----------------------
     # Sandbox Docker config
     # ----------------------

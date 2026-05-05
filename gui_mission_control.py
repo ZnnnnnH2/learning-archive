@@ -450,18 +450,7 @@ class MissionControlWindow(QMainWindow):
             self.log_panel.append("No sandbox connection!", "error")
             return
 
-        # Optional translation
         translated = objective
-        try:
-            from transformers import MarianMTModel, MarianTokenizer
-            _tn = MarianTokenizer.from_pretrained("Helsinki-NLP/opus-mt-tc-big-tr-en")
-            _tm = MarianMTModel.from_pretrained("Helsinki-NLP/opus-mt-tc-big-tr-en")
-            out = _tm.generate(**_tn(objective, return_tensors="pt", padding=True))
-            translated = _tn.decode(out[0], skip_special_tokens=True)
-            if translated != objective:
-                self.log_panel.append(f"Translation: {objective} → {translated}", "info")
-        except Exception:
-            pass  # translation not available, use raw text
 
         self._step_count = 0
         self._click_count = 0

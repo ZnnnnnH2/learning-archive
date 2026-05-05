@@ -4,56 +4,18 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from huggingface_hub import hf_hub_download
-from llama_cpp import Llama
-from llama_cpp.llama_chat_format import Qwen3VLChatHandler
-
 from src.config import cfg, JSON_RE
+from src.model_api import ModelAPIClient, load_model_api_client
 from src.vision import image_to_data_uri
 
 
-def load_llm() -> Llama:
-    model_path = hf_hub_download(repo_id=cfg.GGUF_REPO_ID, filename=cfg.GGUF_MODEL_FILENAME)
-    mmproj_path = hf_hub_download(repo_id=cfg.GGUF_REPO_ID, filename=cfg.GGUF_MMPROJ_FILENAME)
-
-    import os, subprocess
-    model_size_mb = os.path.getsize(model_path) / (1024 * 1024)
-    print(f"[LLM] Model file: {model_path} ({model_size_mb:.0f} MB)")
-    print(f"[LLM] GPU layers: {cfg.N_GPU_LAYERS}")
-
-    # Show VRAM status before loading
-    try:
-        r = subprocess.run(
-            ["nvidia-smi", "--query-gpu=memory.total,memory.used,memory.free",
-             "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=5,
-        )
-        if r.returncode == 0:
-            print(f"[LLM] VRAM status: {r.stdout.strip()} (total,used,free MB)")
-    except Exception:
-        pass
-
-    try:
-        llm = Llama(
-            model_path=model_path,
-            chat_handler=Qwen3VLChatHandler(
-                clip_model_path=mmproj_path,
-                force_reasoning=cfg.FORCE_REASONING,
-                image_min_tokens=cfg.IMAGE_MIN_TOKENS,
-            ),
-            n_ctx=cfg.N_CTX,
-            n_batch=cfg.N_BATCH,
-            n_gpu_layers=cfg.N_GPU_LAYERS,
-            n_threads=cfg.N_THREADS,
-            verbose=False,
-        )
-        print("[LLM] ✓ Qwen3-VL loaded successfully.")
-        return llm
-    except Exception as e:
-        print(f"[LLM] ❌ Failed to load model: {e}")
-        print("[LLM] TIP: Try 'nvidia-smi' to check VRAM usage.")
-        print("[LLM] TIP: Kill stale GPU processes or reduce N_GPU_LAYERS in config.")
-        raise
+def load_llm() -> ModelAPIClient:
+    client = load_model_api_client()
+    print(
+        "[LLM] API client ready "
+        f"(base_url={client.base_url}, vision_model={cfg.VISION_MODEL})"
+    )
+    return client
 
 
 
@@ -64,7 +26,12 @@ def _parse_json_obj(text: str) -> Dict[str, Any]:
     return json.loads(m.group(0))
 
 
-def ask_next_action(llm: Llama, objective: str, screenshot_path: str, history: List[Dict[str, Any]]) -> Dict[str, Any]:
+def ask_next_action(
+    llm: ModelAPIClient,
+    objective: str,
+    screenshot_path: str,
+    history: List[Dict[str, Any]],
+) -> Dict[str, Any]:
     """
     Returns one action JSON. When done: {"action":"BITTI", ...}
     """
@@ -107,7 +74,8 @@ def ask_next_action(llm: Llama, objective: str, screenshot_path: str, history: L
         "Decide the NEXT action from the CURRENT screenshot."
     )
 
-    resp = llm.create_chat_completion(
+    raw_text = llm.complete_text(
+        model=cfg.VISION_MODEL,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": [
@@ -120,4 +88,4 @@ def ask_next_action(llm: Llama, objective: str, screenshot_path: str, history: L
         max_tokens=220,
         stop=["\n\n", "<|im_end|>"],
     )
-    return _parse_json_obj(resp["choices"][0]["message"]["content"])
+    return _parse_json_obj(raw_text)

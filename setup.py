@@ -10,10 +10,6 @@ setup(
         "Pillow>=10.0",
         "numpy>=1.24",
         "opencv-python>=4.8",
-        "huggingface_hub>=0.20",
-        "transformers>=4.40",
-        "sentencepiece>=0.1.99",
-        # llama-cpp-python is installed via prebuilt wheel; see README.
     ],
     entry_points={
         "console_scripts": [

@@ -8,6 +8,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from src.planner import Plan, PlanStep, validate_plan_json
+from src.planner_api import APIPlanner
 
 
 # ─── Sample valid plan data ──────────────────────────────────────────
@@ -170,3 +171,25 @@ class TestValidatePlanJson:
     def test_not_a_dict(self):
         with pytest.raises(ValueError, match="must be a JSON object"):
             validate_plan_json("not a dict")
+
+
+class FakePlannerClient:
+    def __init__(self, content):
+        self.content = content
+        self.calls = []
+
+    def complete_text(self, **kwargs):
+        self.calls.append(kwargs)
+        return self.content
+
+
+def test_api_planner_parses_plan(monkeypatch):
+    monkeypatch.setattr("src.planner_api.cfg.PLANNER_MODEL", "qwen-plus")
+    client = FakePlannerClient(json.dumps(VALID_PLAN_DATA))
+    planner = APIPlanner(client=client)
+
+    plan = planner.plan("Open YouTube")
+
+    assert plan.objective == VALID_PLAN_DATA["objective"]
+    assert len(plan.steps) == 2
+    assert client.calls[0]["model"] == "qwen-plus"

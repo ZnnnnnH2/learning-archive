@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-CUA Mission Control — Local-First Hierarchical Agent GUI
-Plan → Execute → Verify loop with local GGUF planner support.
+CUA Mission Control — API-only Hierarchical Agent GUI
+Plan → Execute → Verify loop using an OpenAI-compatible API.
 """
 from __future__ import annotations
 
@@ -213,10 +213,8 @@ class AgentSignals(QObject):
 # Planner Settings Panel (local + API)
 # ═══════════════════════════════════════════
 
-from PyQt6.QtWidgets import QFileDialog
-
 class PlannerSettingsPanel(QGroupBox):
-    """Panel for configuring the Planner (Local GGUF or API)."""
+    """Panel for configuring the API-only planner and vision model."""
 
     settings_changed = pyqtSignal()
 
@@ -307,15 +305,15 @@ class PlannerSettingsPanel(QGroupBox):
 
         # Provider dropdown
         self.provider_combo = QComboBox()
-        self.provider_combo.addItems(["Local GGUF", "OpenRouter", "OpenAI"])
+        self.provider_combo.addItems(["OpenAI-compatible API"])
         self.provider_combo.currentIndexChanged.connect(self._on_provider_change)
         layout.addRow("Provider:", self.provider_combo)
 
-        # ── Local GGUF: Manual file browse ──
+        # Deprecated local-model controls are kept hidden for layout compatibility.
         local_path_row = QHBoxLayout()
         self.local_path_input = QLineEdit()
-        self.local_path_input.setText(cfg.PLANNER_GGUF_LOCAL_PATH)
-        self.local_path_input.setPlaceholderText("/path/to/model.gguf")
+        self.local_path_input.setText("")
+        self.local_path_input.setPlaceholderText("Local models are unsupported")
         local_path_row.addWidget(self.local_path_input)
         self.browse_btn = QPushButton("📂 Browse")
         self.browse_btn.setObjectName("browseBtn")
@@ -327,32 +325,32 @@ class PlannerSettingsPanel(QGroupBox):
         self._local_path_widget = local_path_widget
 
         # Separator label
-        self.or_label = QLabel("─── or download from HuggingFace ───")
+        self.or_label = QLabel("")
         self.or_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.or_label.setStyleSheet("color: #546e7a; font-size: 10px; padding: 2px 0;")
         layout.addRow(self.or_label)
 
-        # ── Local GGUF: HuggingFace download ──
+        # Deprecated model download controls.
         self.gguf_repo_input = QLineEdit()
-        self.gguf_repo_input.setText(cfg.PLANNER_GGUF_REPO_ID)
-        self.gguf_repo_input.setPlaceholderText("e.g. bartowski/Qwen2.5-7B-Instruct-GGUF")
+        self.gguf_repo_input.setText("")
+        self.gguf_repo_input.setPlaceholderText("Unsupported")
         layout.addRow("HF Repo:", self.gguf_repo_input)
 
         self.gguf_file_input = QLineEdit()
-        self.gguf_file_input.setText(cfg.PLANNER_GGUF_MODEL_FILENAME)
-        self.gguf_file_input.setPlaceholderText("e.g. Qwen2.5-7B-Instruct-Q4_K_M.gguf")
+        self.gguf_file_input.setText("")
+        self.gguf_file_input.setPlaceholderText("Unsupported")
         layout.addRow("HF File:", self.gguf_file_input)
 
         # ── GPU Layers with Auto checkbox ──
         gpu_row = QHBoxLayout()
         self.auto_gpu_checkbox = QCheckBox("Auto (Optimal)")
-        self.auto_gpu_checkbox.setChecked(cfg.PLANNER_N_GPU_LAYERS == -1)
+        self.auto_gpu_checkbox.setChecked(True)
         self.auto_gpu_checkbox.stateChanged.connect(self._on_auto_gpu_toggle)
         gpu_row.addWidget(self.auto_gpu_checkbox)
 
         self.gpu_layers_spin = QSpinBox()
         self.gpu_layers_spin.setRange(0, 200)
-        self.gpu_layers_spin.setValue(max(0, cfg.PLANNER_N_GPU_LAYERS))
+        self.gpu_layers_spin.setValue(0)
         self.gpu_layers_spin.setToolTip("Manual GPU layer count (0 = CPU only)")
         self.gpu_layers_spin.setEnabled(not self.auto_gpu_checkbox.isChecked())
         gpu_row.addWidget(self.gpu_layers_spin)
@@ -365,18 +363,28 @@ class PlannerSettingsPanel(QGroupBox):
         self.gpu_info_label = QLabel("")
         self.gpu_info_label.setStyleSheet("color: #546e7a; font-size: 10px;")
         layout.addRow(self.gpu_info_label)
-        self._detect_gpu_info()
+        self.gpu_info_label.setText("")
 
         # ── API fields ──
+        self.base_url_input = QLineEdit()
+        self.base_url_input.setText(cfg.MODEL_API_BASE_URL)
+        self.base_url_input.setPlaceholderText("https://dashscope.aliyuncs.com/compatible-mode/v1")
+        layout.addRow("API Base URL:", self.base_url_input)
+
+        self.vision_model_input = QLineEdit()
+        self.vision_model_input.setText(cfg.VISION_MODEL)
+        self.vision_model_input.setPlaceholderText("e.g. qwen-vl-max")
+        layout.addRow("Vision Model:", self.vision_model_input)
+
         self.model_input = QLineEdit()
         self.model_input.setText(cfg.PLANNER_MODEL)
-        self.model_input.setPlaceholderText("e.g. meta-llama/llama-3.3-70b-instruct:free")
-        layout.addRow("Model:", self.model_input)
+        self.model_input.setPlaceholderText("e.g. qwen-plus")
+        layout.addRow("Planner Model:", self.model_input)
 
         self.api_key_input = QLineEdit()
         self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key_input.setPlaceholderText("Enter your API key...")
-        self.api_key_input.setText(cfg.PLANNER_API_KEY)
+        self.api_key_input.setText(cfg.MODEL_API_KEY)
         layout.addRow("API Key:", self.api_key_input)
 
         # Apply button
@@ -397,25 +405,7 @@ class PlannerSettingsPanel(QGroupBox):
         self._on_provider_change(0)
 
     def _on_browse(self):
-        """Open file dialog to select a local .gguf model file."""
-        path, _ = QFileDialog.getOpenFileName(
-            self,
-            "Select GGUF Model File",
-            "",
-            "GGUF Models (*.gguf);;All Files (*)",
-            options=QFileDialog.Option.DontUseNativeDialog,
-        )
-        if path:
-            self.local_path_input.setText(path)
-            # Auto-detect file size and show info
-            try:
-                import os
-                size_mb = os.path.getsize(path) / (1024 * 1024)
-                name = os.path.basename(path)
-                self.status_label.setText(
-                    f"📁 {name}\n({size_mb:.0f} MB)")
-            except Exception:
-                pass
+        self.status_label.setText("Local models are no longer supported.")
 
     def _on_auto_gpu_toggle(self, state):
         """Enable/disable manual GPU layer spinner."""
@@ -427,38 +417,10 @@ class PlannerSettingsPanel(QGroupBox):
             self.gpu_layers_spin.setToolTip("Manual GPU layer count (0 = CPU only)")
 
     def _detect_gpu_info(self):
-        """Detect GPU VRAM and show info label (non-blocking)."""
-        def detect():
-            try:
-                import subprocess
-                result = subprocess.run(
-                    ["nvidia-smi", "--query-gpu=name,memory.total,memory.free",
-                     "--format=csv,noheader,nounits"],
-                    capture_output=True, text=True, timeout=5,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    lines = result.stdout.strip().split("\n")
-                    parts = lines[0].split(",")
-                    if len(parts) >= 3:
-                        name = parts[0].strip()
-                        total = int(parts[1].strip())
-                        free = int(parts[2].strip())
-                        info = f"🖥 {name} — {free}/{total} MB VRAM free"
-                        QTimer.singleShot(0, lambda: self.gpu_info_label.setText(info))
-                        return
-                QTimer.singleShot(0, lambda: self.gpu_info_label.setText(
-                    "⚠ No NVIDIA GPU detected (CPU only)"))
-            except FileNotFoundError:
-                QTimer.singleShot(0, lambda: self.gpu_info_label.setText(
-                    "⚠ nvidia-smi not found (CPU only)"))
-            except Exception:
-                QTimer.singleShot(0, lambda: self.gpu_info_label.setText(
-                    "⚠ GPU detection failed"))
-
-        threading.Thread(target=detect, daemon=True).start()
+        self.gpu_info_label.setText("")
 
     def _on_provider_change(self, idx: int):
-        is_local = idx == 0
+        is_local = False
         # Local fields
         self._local_path_widget.setVisible(is_local)
         self.or_label.setVisible(is_local)
@@ -474,7 +436,7 @@ class PlannerSettingsPanel(QGroupBox):
         form = self.layout()
         if isinstance(form, QFormLayout):
             local_labels = ("Local File:", "HF Repo:", "HF File:", "GPU Layers:")
-            api_labels = ("Model:", "API Key:")
+            api_labels = ("API Base URL:", "Vision Model:", "Planner Model:", "API Key:")
             for row in range(form.rowCount()):
                 label_item = form.itemAt(row, QFormLayout.ItemRole.LabelRole)
                 field_item = form.itemAt(row, QFormLayout.ItemRole.FieldRole)
@@ -497,20 +459,11 @@ class PlannerSettingsPanel(QGroupBox):
     def _apply_to_config(self):
         """Write UI values back to cfg for the planner."""
         idx = self.provider_combo.currentIndex()
-        provider_map = {0: "local", 1: "openrouter", 2: "openai"}
-        cfg.PLANNER_PROVIDER = provider_map.get(idx, "local")
-
-        if idx == 0:
-            cfg.PLANNER_GGUF_LOCAL_PATH = self.local_path_input.text().strip()
-            cfg.PLANNER_GGUF_REPO_ID = self.gguf_repo_input.text().strip()
-            cfg.PLANNER_GGUF_MODEL_FILENAME = self.gguf_file_input.text().strip()
-            if self.auto_gpu_checkbox.isChecked():
-                cfg.PLANNER_N_GPU_LAYERS = -1  # Auto
-            else:
-                cfg.PLANNER_N_GPU_LAYERS = self.gpu_layers_spin.value()
-        else:
-            cfg.PLANNER_MODEL = self.model_input.text().strip()
-            cfg.PLANNER_API_KEY = self.api_key_input.text().strip()
+        cfg.PLANNER_PROVIDER = "api"
+        cfg.MODEL_API_BASE_URL = self.base_url_input.text().strip()
+        cfg.MODEL_API_KEY = self.api_key_input.text().strip()
+        cfg.VISION_MODEL = self.vision_model_input.text().strip()
+        cfg.PLANNER_MODEL = self.model_input.text().strip()
 
     def set_status(self, text: str):
         self.status_label.setText(text)
@@ -1063,9 +1016,9 @@ class MissionControlLocalWindow(QMainWindow):
         # LLM (Qwen3-VL executor + verifier)
         try:
             QTimer.singleShot(0, lambda: self.top_bar.set_model_status("loading"))
-            self.signals.log.emit("Loading Qwen3-VL model (executor/verifier)…", "info")
+            self.signals.log.emit("Initializing vision API client…", "info")
             self.llm = load_llm()
-            self.signals.log.emit("Qwen3-VL model ready ✓", "success")
+            self.signals.log.emit("Vision API client ready ✓", "success")
             QTimer.singleShot(0, lambda: self.top_bar.set_model_status("ready"))
         except Exception as e:
             self.signals.log.emit(f"Model ERROR: {e}", "error")
@@ -1098,23 +1051,13 @@ class MissionControlLocalWindow(QMainWindow):
         """Load the planner in a background thread after settings are applied."""
         def load_planner():
             try:
-                provider = cfg.PLANNER_PROVIDER.lower()
-                if provider == "local":
-                    from src.planner_local import LocalGGUFPlanner
-                    self.planner = LocalGGUFPlanner()
-                elif provider in ("openrouter", "openai"):
-                    from src.planner_api import APIPlanner
-                    self.planner = APIPlanner()
-                else:
-                    self.planner = None
-                    QTimer.singleShot(0, lambda: self.planner_settings.set_status(
-                        f"🔴 Unknown provider: {provider}"))
-                    return
+                from src.planner_api import APIPlanner
+                self.planner = APIPlanner()
 
                 QTimer.singleShot(0, lambda: self.planner_settings.set_status(
                     "🟢 Planner loaded!"))
                 self.signals.log.emit(
-                    f"✓ Planner ready (provider={provider})", "success")
+                    f"✓ Planner ready (model={cfg.PLANNER_MODEL})", "success")
             except Exception as e:
                 self.planner = None
                 err = str(e)[:100]
@@ -1145,7 +1088,7 @@ class MissionControlLocalWindow(QMainWindow):
             self.log_panel.append("A command is already running.", "warn")
             return
         if not self.llm:
-            self.log_panel.append("Qwen3-VL model not loaded yet!", "error")
+            self.log_panel.append("Vision API client not initialized yet!", "error")
             return
         if not self.sandbox:
             self.log_panel.append("No sandbox connection!", "error")

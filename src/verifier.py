@@ -5,9 +5,8 @@ import json
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List
 
-from llama_cpp import Llama
-
-from src.config import JSON_RE
+from src.config import JSON_RE, cfg
+from src.model_api import ModelAPIClient
 from src.planner import PlanStep
 from src.vision import image_to_data_uri
 
@@ -104,7 +103,7 @@ def _build_verifier_prompt(step: PlanStep) -> str:
 
 # ─── Verify Step Function ────────────────────────────────────────────
 
-def verify_step(llm: Llama, step: PlanStep, screenshot_path: str) -> VerifierResult:
+def verify_step(llm: ModelAPIClient, step: PlanStep, screenshot_path: str) -> VerifierResult:
     """
     Use the existing Qwen3-VL vision model to verify whether a plan step
     has been completed based on the current screenshot.
@@ -112,7 +111,8 @@ def verify_step(llm: Llama, step: PlanStep, screenshot_path: str) -> VerifierRes
     uri = image_to_data_uri(screenshot_path)
     user_prompt = _build_verifier_prompt(step)
 
-    resp = llm.create_chat_completion(
+    raw_text = llm.complete_text(
+        model=cfg.VISION_MODEL,
         messages=[
             {"role": "system", "content": VERIFIER_SYSTEM_PROMPT},
             {"role": "user", "content": [
@@ -125,8 +125,6 @@ def verify_step(llm: Llama, step: PlanStep, screenshot_path: str) -> VerifierRes
         max_tokens=300,
         stop=["\n\n", "<|im_end|>"],
     )
-
-    raw_text = resp["choices"][0]["message"]["content"]
     return _parse_verifier_output(raw_text, step.id)
 
 

@@ -284,10 +284,10 @@ class InspectorPanel(QFrame):
 
     def set_config(self, cfg) -> None:
         lines = [
-            f"Model: {getattr(cfg, 'GGUF_MODEL_FILENAME', '?')}",
+            f"API Base: {getattr(cfg, 'MODEL_API_BASE_URL', '?')}",
+            f"Vision Model: {getattr(cfg, 'VISION_MODEL', '?')}",
+            f"Planner Model: {getattr(cfg, 'PLANNER_MODEL', '?')}",
             f"Max Steps: {getattr(cfg, 'MAX_STEPS', '?')}",
-            f"N_CTX: {getattr(cfg, 'N_CTX', '?')}",
-            f"GPU Layers: {getattr(cfg, 'N_GPU_LAYERS', '?')}",
         ]
         self.config_info.setText("\n".join(lines))
 

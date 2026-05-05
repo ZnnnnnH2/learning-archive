@@ -20,20 +20,10 @@ def trim_history(history, keep_last=6):
 
 
 def _create_planner():
-    """Create a planner instance based on config. Returns None if not configured."""
-    from src.planner import Planner
+    """Create the API planner. Returns None if planning is disabled."""
+    from src.planner_api import APIPlanner
 
-    provider = cfg.PLANNER_PROVIDER.lower()
-
-    if provider == "local":
-        from src.planner_local import LocalGGUFPlanner
-        return LocalGGUFPlanner()
-    elif provider in ("openrouter", "openai"):
-        from src.planner_api import APIPlanner
-        return APIPlanner()
-    else:
-        print(f"[WARN] Unknown PLANNER_PROVIDER '{provider}', falling back to reactive mode.")
-        return None
+    return APIPlanner()
 
 
 def main() -> None:
@@ -45,7 +35,6 @@ def main() -> None:
         sandbox.launch_vnc_viewer()
 
     llm = load_llm()
-    print("[DEBUG] cfg.N_CTX =", cfg.N_CTX)
 
     # ── Set up planner if enabled ─────────────────────────────
     planner = None
