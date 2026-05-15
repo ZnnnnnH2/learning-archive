@@ -1,0 +1,9 @@
+[project]
+name = "openclaw-literature-research-worker"
+version = "0.1.0"
+description = "OpenClaw literature research skill runtime package."
+requires-python = ">=3.12"
+dependencies = [
+    "python-dotenv>=1.2.0",
+    "requests>=2.32.0",
+]
