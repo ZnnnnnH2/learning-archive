@@ -1,3 +1,4 @@
+use crate::runtime_log;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -62,12 +63,18 @@ fn run_notification_worker(app: AppHandle, receiver: Receiver<NotificationComman
                 }
 
                 if let Err(error) = notifier.show(&request) {
-                    eprintln!("desktop notification failed: {error}");
+                    runtime_log::warn(
+                        "desktop_notifications",
+                        format!("desktop notification failed: {error}"),
+                    );
                 }
             }
             NotificationCommand::Close { tag } => {
                 if let Err(error) = notifier.close(&tag) {
-                    eprintln!("desktop notification close failed: {error}");
+                    runtime_log::warn(
+                        "desktop_notifications",
+                        format!("desktop notification close failed: {error}"),
+                    );
                 }
             }
         }
@@ -118,6 +125,7 @@ impl PlatformNotifier {
 #[cfg(target_os = "windows")]
 mod windows {
     use super::{emit_shell_notification_activated, AppHandle, HashMap, ShellNotificationRequest};
+    use crate::runtime_log;
     use windows::{
         core::{IInspectable, Ref, HSTRING},
         Data::Xml::Dom::XmlDocument,
@@ -149,7 +157,10 @@ mod windows {
             let aumid = match register(&preferred_aumid, &product_name, None) {
                 Ok(()) => preferred_aumid,
                 Err(error) => {
-                    eprintln!("failed to register Windows toast AUMID, falling back: {error}");
+                    runtime_log::warn(
+                        "desktop_notifications",
+                        format!("failed to register Windows toast AUMID, falling back: {error}"),
+                    );
                     ToastManager::POWERSHELL_AUM_ID.to_string()
                 }
             };
@@ -194,7 +205,10 @@ mod windows {
             let failed = TypedEventHandler::new(
                 move |_toast: Ref<'_, ToastNotification>, args: Ref<'_, ToastFailedEventArgs>| {
                     let error_code = args.as_ref().and_then(|args| args.ErrorCode().ok());
-                    eprintln!("Windows toast callback error for {failed_tag}: {error_code:?}");
+                    runtime_log::warn(
+                        "desktop_notifications",
+                        format!("Windows toast callback error for {failed_tag}: {error_code:?}"),
+                    );
                     Ok(())
                 },
             );
@@ -308,7 +322,9 @@ mod linux {
                 .summary(&request.title)
                 .body(&request.body)
                 .appname("SideShell")
-                .timeout(Timeout::Milliseconds(request.timeout_ms.unwrap_or(3000) as i32))
+                .timeout(Timeout::Milliseconds(
+                    request.timeout_ms.unwrap_or(3000) as i32
+                ))
                 .action("default", "Open SideShell");
 
             if let Some(existing_id) = self.ids.get(&request.tag).copied() {

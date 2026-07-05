@@ -18,6 +18,7 @@ import {
   sortProjectsByActivityDay,
   sortShellIdsByActivityDay,
 } from "./activityOrdering";
+import { applyDefaultProjectExpansion } from "./projectHydration";
 import { areShortcutKeymapsEqual } from "./shortcuts";
 import { AGENT_KINDS } from "./types";
 import type {
@@ -37,6 +38,7 @@ const PERSIST_DEBOUNCE_MS = 250;
 
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 let persistResolvers: Array<() => void> = [];
+let pendingSnapshotBuilder: (() => PersistedState) | null = null;
 
 interface AppState {
   projects: Record<string, Project>;
@@ -121,7 +123,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     };
     set((s) => ({
       projects: { ...s.projects, [id]: project },
-      projectOrder: [...s.projectOrder, id],
+      projectOrder: [id, ...s.projectOrder],
     }));
     // Auto-create one shell
     get().addShell(id);
@@ -765,14 +767,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       shells
     );
+    const hydratedProjects = applyDefaultProjectExpansion(
+      projects,
+      sortedProjectOrder
+    );
     const active =
       (state.activeShellId && shells[state.activeShellId]?.id) ||
       sortedProjectOrder
-        .map((pid) => projects[pid].shellIds[0])
+        .map((pid) => hydratedProjects[pid].shellIds[0])
         .find(Boolean) ||
       null;
     set({
-      projects,
+      projects: hydratedProjects,
       shells,
       projectOrder: sortedProjectOrder,
       activeShellId: active,
@@ -783,44 +789,50 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   persist: () => {
-    const s = get();
-    if (!s.hydrated) return Promise.resolve();
-    const snapshot: PersistedState = {
-      projects: s.projectOrder.map((pid) => {
-        const p = s.projects[pid];
-        return {
-          id: p.id,
-          updatedAt: p.updatedAt,
-          name: p.name,
-          path: p.path,
-          shells: p.shellIds.map((sid) => {
-            const sh = s.shells[sid];
-            return {
-              id: sh.id,
-              updatedAt: sh.updatedAt,
-              name: sh.name,
-              autoName: sh.autoName,
-              nameMode: sh.nameMode,
-              agentKind: sh.agentKind,
-              agentLabel: sh.agentLabel,
-              resumeEntryCommand: sh.resumeEntryCommand,
-              newSessionCommand: sh.newSessionCommand,
-              taskSummary: sh.taskSummary,
-              terminalTitle: sh.terminalTitle,
-              cwd: sh.cwd || sh.initialCwd,
-            };
-          }),
-        };
-      }),
-      activeShellId: s.activeShellId,
-      sidebarWidth: s.sidebarWidth,
-      terminal: s.terminalSettings,
-    };
-    return schedulePersist(snapshot);
+    if (!get().hydrated) return Promise.resolve();
+    // Defer snapshot construction to the debounced flush. Rapid mutations
+    // (shell switches, resize drags, cwd updates during heavy output) only
+    // build a single snapshot from the latest state instead of one per call.
+    return schedulePersist(() => buildPersistedSnapshot(get()));
   },
 }));
 
-function schedulePersist(snapshot: PersistedState): Promise<void> {
+function buildPersistedSnapshot(s: AppState): PersistedState {
+  return {
+    projects: s.projectOrder.map((pid) => {
+      const p = s.projects[pid];
+      return {
+        id: p.id,
+        updatedAt: p.updatedAt,
+        name: p.name,
+        path: p.path,
+        shells: p.shellIds.map((sid) => {
+          const sh = s.shells[sid];
+          return {
+            id: sh.id,
+            updatedAt: sh.updatedAt,
+            name: sh.name,
+            autoName: sh.autoName,
+            nameMode: sh.nameMode,
+            agentKind: sh.agentKind,
+            agentLabel: sh.agentLabel,
+            resumeEntryCommand: sh.resumeEntryCommand,
+            newSessionCommand: sh.newSessionCommand,
+            taskSummary: sh.taskSummary,
+            terminalTitle: sh.terminalTitle,
+            cwd: sh.cwd || sh.initialCwd,
+          };
+        }),
+      };
+    }),
+    activeShellId: s.activeShellId,
+    sidebarWidth: s.sidebarWidth,
+    terminal: s.terminalSettings,
+  };
+}
+
+function schedulePersist(buildSnapshot: () => PersistedState): Promise<void> {
+  pendingSnapshotBuilder = buildSnapshot;
   if (persistTimer !== null) {
     clearTimeout(persistTimer);
   }
@@ -831,8 +843,12 @@ function schedulePersist(snapshot: PersistedState): Promise<void> {
       persistTimer = null;
       const resolvers = persistResolvers;
       persistResolvers = [];
+      const builder = pendingSnapshotBuilder;
+      pendingSnapshotBuilder = null;
       try {
-        await savePersistedState(snapshot);
+        if (builder) {
+          await savePersistedState(builder());
+        }
       } catch (e) {
         console.warn("persist failed", e);
       } finally {

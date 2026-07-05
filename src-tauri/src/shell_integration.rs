@@ -1,3 +1,4 @@
+use crate::runtime_log;
 use anyhow::Context;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -18,6 +19,7 @@ enum ShellKind {
     Zsh,
     Fish,
     PowerShell,
+    Cmd,
 }
 
 const INTEGRATION_VERSION: &str = "v1";
@@ -64,8 +66,22 @@ pub fn prepare_shell_launch(shell: &str) -> Result<ShellLaunchConfig> {
                 quote_powershell_arg(&assets.powershell_init.display().to_string())
             ));
         }
+        ShellKind::Cmd => {
+            launch.args.push("/D".to_string());
+            launch.args.push("/K".to_string());
+            launch.args.push("chcp 65001 > nul".to_string());
+        }
     }
 
+    runtime_log::info(
+        "shell_integration",
+        format!(
+            "prepared launch shell={} kind={:?} args={}",
+            shell,
+            kind,
+            launch.args.len()
+        ),
+    );
     Ok(launch)
 }
 
@@ -82,6 +98,7 @@ fn detect_shell_kind(shell: &str) -> Option<ShellKind> {
         "zsh" => Some(ShellKind::Zsh),
         "fish" => Some(ShellKind::Fish),
         "pwsh" | "powershell" => Some(ShellKind::PowerShell),
+        "cmd" => Some(ShellKind::Cmd),
         _ => None,
     }
 }
@@ -290,7 +307,17 @@ end
 }
 
 fn powershell_init_script() -> &'static str {
-    r#"$global:__sideshellHost = try { [System.Net.Dns]::GetHostName() } catch { "localhost" }
+    r#"try {
+  $global:__sideshellUtf8Encoding = [System.Text.UTF8Encoding]::new($false)
+  [Console]::InputEncoding = $global:__sideshellUtf8Encoding
+  [Console]::OutputEncoding = $global:__sideshellUtf8Encoding
+  $OutputEncoding = $global:__sideshellUtf8Encoding
+  if (Get-Command chcp.com -ErrorAction Ignore) {
+    chcp.com 65001 | Out-Null
+  }
+} catch {}
+
+$global:__sideshellHost = try { [System.Net.Dns]::GetHostName() } catch { "localhost" }
 $global:__sideshellInCommand = $false
 
 function global:__sideshell_emit([string]$payload) {

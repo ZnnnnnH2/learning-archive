@@ -2,6 +2,7 @@ mod commands;
 mod desktop_notifications;
 mod persist;
 mod pty;
+mod runtime_log;
 mod shell_integration;
 
 use desktop_notifications::DesktopNotificationService;
@@ -40,10 +41,15 @@ pub fn run() {
         .manage(manager)
         .setup(|app| {
             app.manage(DesktopNotificationService::new(app.handle().clone()));
+            let log_path = runtime_log::log_file_path()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<unavailable>".to_string());
+            runtime_log::info("app", format!("startup log_path={log_path}"));
             Ok(())
         })
         .on_window_event(move |_window, event| {
             if let tauri::WindowEvent::Destroyed = event {
+                runtime_log::info("app", "main window destroyed; killing all PTYs");
                 kill_all_manager.kill_all();
             }
         })

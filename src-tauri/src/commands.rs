@@ -8,9 +8,9 @@ use std::sync::Arc;
 use tauri::{AppHandle, State};
 
 #[tauri::command]
-pub fn pty_spawn(
+pub async fn pty_spawn(
     app: AppHandle,
-    state: State<Arc<PtyManager>>,
+    state: State<'_, Arc<PtyManager>>,
     project_id: String,
     cwd: String,
     rows: u16,
@@ -79,7 +79,7 @@ pub fn load_state() -> SessionState {
 }
 
 #[tauri::command]
-pub fn save_state(state: SessionState) -> Result<(), String> {
+pub async fn save_state(state: SessionState) -> Result<(), String> {
     persist::save_state(&state).map_err(|e| e.to_string())
 }
 
@@ -141,7 +141,7 @@ fn spawn_external_command(
 }
 
 #[tauri::command]
-pub fn open_project_in_editor(editor: String, path: String) -> Result<(), String> {
+pub async fn open_project_in_editor(editor: String, path: String) -> Result<(), String> {
     validate_directory(&path)?;
 
     let (editor_command, not_found_message) = match editor.as_str() {
@@ -177,7 +177,7 @@ pub fn open_project_in_editor(editor: String, path: String) -> Result<(), String
 }
 
 #[tauri::command]
-pub fn open_project_in_file_manager(path: String) -> Result<(), String> {
+pub async fn open_project_in_file_manager(path: String) -> Result<(), String> {
     validate_directory(&path)?;
 
     #[cfg(target_os = "windows")]

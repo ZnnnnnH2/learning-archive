@@ -1,6 +1,6 @@
 [package]
 name = "sideshell"
-version = "0.10.0"
+version = "0.11.0"
 description = "SideShell - a modern cross-platform terminal with left-side project/shell tree"
 authors = ["SideShell"]
 edition = "2021"
@@ -47,6 +47,7 @@ codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
+
 
 
 

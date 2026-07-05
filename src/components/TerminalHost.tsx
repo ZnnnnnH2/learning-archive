@@ -2,6 +2,7 @@ import {
   useEffect,
   useRef,
   useState,
+  useMemo,
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { useAppStore } from "../store";
@@ -9,6 +10,7 @@ import type { MessageKey } from "../i18n";
 import { useI18n } from "../useI18n";
 import type { AgentKind, LazyShellStartMode, Shell } from "../types";
 import { cn } from "../utils";
+import { useShallow } from "zustand/react/shallow";
 import { TerminalView } from "./TerminalView";
 import { Welcome } from "./Welcome";
 
@@ -236,8 +238,54 @@ function LazyRestorePrompt({
 
 export function TerminalHost() {
   const { t } = useI18n();
-  const shells = useAppStore((s) => s.shells);
+  const ids = useAppStore(useShallow((s) => Object.keys(s.shells)));
+  const totalShellsCount = ids.length;
+
   const activeShellId = useAppStore((s) => s.activeShellId);
+  const activeShell = useAppStore((s) => (s.activeShellId ? s.shells[s.activeShellId] : null));
+
+  // Virtualization: keep only the most recently active terminals mounted
+  const lastActiveMapRef = useRef<Record<string, number>>({});
+  const MAX_MOUNTED_TERMINALS = 12;
+
+  useEffect(() => {
+    if (activeShellId) {
+      lastActiveMapRef.current[activeShellId] = Date.now();
+    }
+  }, [activeShellId]);
+
+  const nonLazyIds = useAppStore(
+    useShallow((s) => {
+      const result: string[] = [];
+      for (const id in s.shells) {
+        if (!s.shells[id].lazyStart) {
+          result.push(id);
+        }
+      }
+      return result;
+    })
+  );
+
+  const mountedIds = useMemo(() => {
+    const sorted = [...nonLazyIds].sort((a, b) => {
+      const timeA = lastActiveMapRef.current[a] || 0;
+      const timeB = lastActiveMapRef.current[b] || 0;
+      return timeB - timeA;
+    });
+
+    const nextMounted = new Set<string>();
+    if (activeShellId && nonLazyIds.includes(activeShellId)) {
+      nextMounted.add(activeShellId);
+    }
+    
+    for (const id of sorted) {
+      if (nextMounted.size >= MAX_MOUNTED_TERMINALS) break;
+      nextMounted.add(id);
+    }
+
+    return Array.from(nextMounted);
+  }, [nonLazyIds, activeShellId]);
+
   const startLazyShell = useAppStore((s) => s.startLazyShell);
   const setAgentRestoreDefault = useAppStore((s) => s.setAgentRestoreDefault);
   const clearAgentRestoreDefault = useAppStore((s) => s.clearAgentRestoreDefault);
@@ -247,9 +295,6 @@ export function TerminalHost() {
   const [expandedPromptShellId, setExpandedPromptShellId] = useState<string | null>(
     null
   );
-  const ids = Object.keys(shells);
-  const mountedIds = ids.filter((id) => !shells[id].lazyStart);
-  const activeShell = activeShellId ? shells[activeShellId] : null;
 
   useEffect(() => {
     setExpandedPromptShellId(null);
@@ -269,7 +314,7 @@ export function TerminalHost() {
     startLazyShell,
   ]);
 
-  if (ids.length === 0) return <Welcome />;
+  if (totalShellsCount === 0) return <Welcome />;
 
   const currentDefaultMode = activeShell?.agentKind
     ? restoreDefaultsByAgent[activeShell.agentKind] ?? null
@@ -300,7 +345,7 @@ export function TerminalHost() {
   return (
     <div className="relative flex-1 min-w-0 overflow-hidden bg-bg-0">
       {mountedIds.map((id) => (
-        <TerminalView key={id} shell={shells[id]} active={id === activeShellId} />
+        <TerminalView key={id} shellId={id} active={id === activeShellId} />
       ))}
       {shouldRenderPrompt && activeShell ? (
         shouldRenderFullPrompt ? (

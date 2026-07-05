@@ -150,7 +150,9 @@ export function Sidebar() {
         </div>
 
         <Resizer
-          onResize={(dx) => setSidebarWidth(sidebarWidth + dx)}
+          onResize={(dx) =>
+            setSidebarWidth(useAppStore.getState().sidebarWidth + dx)
+          }
         />
       </aside>
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />

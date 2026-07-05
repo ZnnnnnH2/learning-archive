@@ -4,20 +4,25 @@ import { resolve } from "node:path";
 
 import ts from "typescript";
 
-const sourcePath = resolve("src/activityOrdering.ts");
-const source = await readFile(sourcePath, "utf8");
-const transpiled = ts.transpileModule(source, {
-  compilerOptions: {
-    module: ts.ModuleKind.ES2022,
-    target: ts.ScriptTarget.ES2022,
-    verbatimModuleSyntax: false,
-  },
-  fileName: sourcePath,
-}).outputText;
+async function importTranspiledTs(path) {
+  const sourcePath = resolve(path);
+  const source = await readFile(sourcePath, "utf8");
+  const transpiled = ts.transpileModule(source, {
+    compilerOptions: {
+      module: ts.ModuleKind.ES2022,
+      target: ts.ScriptTarget.ES2022,
+      verbatimModuleSyntax: false,
+    },
+    fileName: sourcePath,
+  }).outputText;
 
-const moduleUrl =
-  "data:text/javascript;base64," + Buffer.from(transpiled).toString("base64");
-const ordering = await import(moduleUrl);
+  const moduleUrl =
+    "data:text/javascript;base64," + Buffer.from(transpiled).toString("base64");
+  return import(moduleUrl);
+}
+
+const ordering = await importTranspiledTs("src/activityOrdering.ts");
+const hydration = await importTranspiledTs("src/projectHydration.ts");
 
 function localNoon(dayOffset) {
   const now = new Date();
@@ -106,6 +111,89 @@ function localNoon(dayOffset) {
     ),
     ["projectByChild", "projectYesterday", "projectMissing"]
   );
+}
+
+{
+  const projects = Object.fromEntries(
+    Array.from({ length: 8 }, (_, index) => {
+      const id = `project${index + 1}`;
+      return [
+        id,
+        {
+          id,
+          name: id,
+          path: `D:\\${id}`,
+          expanded: true,
+          shellIds: [],
+        },
+      ];
+    })
+  );
+  const expanded = hydration.applyDefaultProjectExpansion(
+    projects,
+    Object.keys(projects)
+  );
+  assert.deepEqual(
+    Object.values(expanded).map((project) => project.expanded),
+    [true, true, true, true, true, true, false, false]
+  );
+}
+
+{
+  const projects = Object.fromEntries(
+    Array.from({ length: 6 }, (_, index) => {
+      const id = `project${index + 1}`;
+      return [
+        id,
+        {
+          id,
+          name: id,
+          path: `D:\\${id}`,
+          expanded: false,
+          shellIds: [],
+        },
+      ];
+    })
+  );
+  const expanded = hydration.applyDefaultProjectExpansion(
+    projects,
+    Object.keys(projects)
+  );
+  assert.equal(
+    Object.values(expanded).every((project) => project.expanded),
+    true
+  );
+}
+
+{
+  const shells = {};
+  const projects = Object.fromEntries(
+    Array.from({ length: 8 }, (_, index) => {
+      const id = `project${index + 1}`;
+      return [
+        id,
+        {
+          id,
+          name: id,
+          path: `D:\\${id}`,
+          expanded: true,
+          shellIds: [],
+          updatedAt: index === 7 ? undefined : localNoon(-index),
+        },
+      ];
+    })
+  );
+  const sortedProjectOrder = ordering.sortProjectsByActivityDay(
+    Object.keys(projects),
+    projects,
+    shells
+  );
+  const expanded = hydration.applyDefaultProjectExpansion(
+    projects,
+    sortedProjectOrder
+  );
+  assert.equal(sortedProjectOrder.at(-1), "project8");
+  assert.equal(expanded.project8.expanded, false);
 }
 
 console.log("activity ordering tests passed");

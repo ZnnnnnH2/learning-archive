@@ -2,7 +2,9 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { WebglAddon } from "@xterm/addon-webgl";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { openUrl } from "@tauri-apps/plugin-opener";
 import { ArrowDownToLine } from "lucide-react";
 import {
   consumeTypedInputBuffer,
@@ -24,6 +26,7 @@ import {
   ptyResize,
   ptySpawn,
   ptyWrite,
+  ptyKill,
 } from "../ipc";
 import {
   buildPtySpawnOptions,
@@ -37,7 +40,7 @@ import { useAppStore } from "../store";
 import type { Shell, ShortcutKeymap } from "../types";
 
 interface Props {
-  shell: Shell;
+  shellId: string;
   active: boolean;
 }
 
@@ -68,7 +71,8 @@ const THEME = {
 const TERMINAL_SCROLLBACK = 3000;
 const TERMINAL_WRITE_FRAME_BYTES = 256 * 1024;
 
-function TerminalViewComponent({ shell, active }: Props) {
+function TerminalViewComponent({ shellId, active }: Props) {
+  const shell = useAppStore((s) => s.shells[shellId])!;
   const hostRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
@@ -144,13 +148,13 @@ function TerminalViewComponent({ shell, active }: Props) {
   };
 
   const trackAgentLaunch = (line: string) => {
-    const currentShell = useAppStore.getState().shells[shell.id];
+    const currentShell = useAppStore.getState().shells[shellId];
     const launch = detectAgentLaunchFromCommand(
       line,
       currentShell?.cwd ?? shell.cwd
     );
     if (!launch) return false;
-    startShellAgentSession(shell.id, launch);
+    startShellAgentSession(shellId, launch);
     return true;
   };
 
@@ -186,14 +190,14 @@ function TerminalViewComponent({ shell, active }: Props) {
     pendingCommandKindRef.current = null;
     clearResumeFallbackTimer();
     if (commandKind === "startup") {
-      clearShellStartupCommand(shell.id);
+      clearShellStartupCommand(shellId);
     }
-    setShellStatus(shell.id, "running");
+    setShellStatus(shellId, "running");
     ptyWrite(sid, stringToBase64(`${command}\r`)).catch((error) => {
       resumeSentRef.current = false;
       pendingResumeCommandRef.current = command;
       pendingCommandKindRef.current = commandKind;
-      setShellStatus(shell.id, "error");
+      setShellStatus(shellId, "error");
       console.error("resume command failed", error);
     });
   };
@@ -248,11 +252,23 @@ function TerminalViewComponent({ shell, active }: Props) {
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
-    term.loadAddon(new WebLinksAddon());
+    term.loadAddon(new WebLinksAddon(handleTerminalWebLink));
     term.attachCustomKeyEventHandler((event) =>
       handleTerminalShortcut(term, shortcutKeymapRef.current, event)
     );
     term.open(hostRef.current);
+    try {
+      const webgl = new WebglAddon();
+      webgl.onContextLoss(() => {
+        webgl.dispose();
+      });
+      term.loadAddon(webgl);
+    } catch (e) {
+      console.warn(
+        "Failed to load WebGL addon, falling back to canvas renderer",
+        e
+      );
+    }
     try {
       fit.fit();
     } catch {}
@@ -261,10 +277,10 @@ function TerminalViewComponent({ shell, active }: Props) {
     fitRef.current = fit;
 
     const markAttention = () => {
-      raiseShellAlert(shell.id, createBellNotification());
+      raiseShellAlert(shellId, createBellNotification());
     };
     const captureTaskSummary = (line: string) => {
-      const currentShell = useAppStore.getState().shells[shell.id];
+      const currentShell = useAppStore.getState().shells[shellId];
       const summary = summarizeAgentTaskFromInput(line);
       if (
         !summary ||
@@ -273,7 +289,7 @@ function TerminalViewComponent({ shell, active }: Props) {
       ) {
         return;
       }
-      setShellTaskSummary(shell.id, summary);
+      setShellTaskSummary(shellId, summary);
     };
 
     // OSC 7 — cwd updates from shell
@@ -285,7 +301,7 @@ function TerminalViewComponent({ shell, active }: Props) {
           let p = decodeURIComponent(m[1]);
           // On Windows paths come as /C:/Users/... — strip leading slash
           if (/^\/[a-zA-Z]:/.test(p)) p = p.slice(1).replace(/\//g, "\\");
-          setShellCwd(shell.id, p);
+          setShellCwd(shellId, p);
         }
       } catch {}
       return false;
@@ -293,7 +309,7 @@ function TerminalViewComponent({ shell, active }: Props) {
 
     // OSC 9 — typical "bell" / notification
     term.parser.registerOscHandler(9, (payload) => {
-      raiseShellAlert(shell.id, parseOsc9Notification(payload));
+      raiseShellAlert(shellId, parseOsc9Notification(payload));
       return false;
     });
     const onBell = term.onBell(() => {
@@ -303,15 +319,15 @@ function TerminalViewComponent({ shell, active }: Props) {
       syncScrollToBottomVisibility();
     });
     const onTitleChange = term.onTitleChange((title) => {
-      const currentShell = useAppStore.getState().shells[shell.id];
-      setShellTerminalTitle(shell.id, title);
+      const currentShell = useAppStore.getState().shells[shellId];
+      setShellTerminalTitle(shellId, title);
       const nextStatus = detectShellStatusFromTitle(title);
       if (nextStatus) {
-        setShellStatus(shell.id, nextStatus);
+        setShellStatus(shellId, nextStatus);
         return;
       }
       if (currentShell?.agentKind === "codex" && title.trim()) {
-        setShellStatus(shell.id, "idle");
+        setShellStatus(shellId, "idle");
       }
     });
     term.parser.registerOscHandler(133, (payload) => {
@@ -320,10 +336,10 @@ function TerminalViewComponent({ shell, active }: Props) {
         flushPendingResume();
       }
       const currentStatus =
-        useAppStore.getState().shells[shell.id]?.status ?? "idle";
+        useAppStore.getState().shells[shellId]?.status ?? "idle";
       const nextStatus = detectShellStatusFromOsc133(payload, currentStatus);
       if (nextStatus) {
-        setShellStatus(shell.id, nextStatus);
+        setShellStatus(shellId, nextStatus);
       }
       return false;
     });
@@ -399,12 +415,18 @@ function TerminalViewComponent({ shell, active }: Props) {
       });
       unlistenExit = await onPtyExit((e) => {
         if (e.sessionId !== sessionIdRef.current) return;
-        setShellExit(shell.id, e.code);
+        setShellExit(shellId, e.code);
         sessionIdRef.current = null;
         attachedSeqRef.current = 0;
         attachCompleteRef.current = false;
         pendingDataRef.current = [];
       });
+
+      if (disposedRef.current) {
+        unlistenData?.();
+        unlistenExit?.();
+        return;
+      }
 
       const rows = term.rows;
       const cols = term.cols;
@@ -415,7 +437,7 @@ function TerminalViewComponent({ shell, active }: Props) {
         let spawnCwd = shell.cwd;
         if (!(await pathExists(spawnCwd)) && projectPath !== spawnCwd) {
           spawnCwd = projectPath;
-          setShellCwd(shell.id, projectPath);
+          setShellCwd(shellId, projectPath);
         }
 
         const spawnOptions = buildPtySpawnOptions(
@@ -428,14 +450,18 @@ function TerminalViewComponent({ shell, active }: Props) {
           cols,
           spawnOptions
         );
+        if (disposedRef.current) {
+          ptyKill(sid).catch(() => {});
+          return;
+        }
         sessionIdRef.current = sid;
-        if (!disposedRef.current) setShellSession(shell.id, sid);
-      } else if (useAppStore.getState().activeShellId === shell.id) {
+        if (!disposedRef.current) setShellSession(shellId, sid);
+      } else if (useAppStore.getState().activeShellId === shellId) {
         // ensure backend size matches
         ptyResize(sid, rows, cols).catch(() => {});
       }
-      setShellSize(shell.id, cols, rows);
-      updatePendingResumeCommand(useAppStore.getState().shells[shell.id]);
+      setShellSize(shellId, cols, rows);
+      updatePendingResumeCommand(useAppStore.getState().shells[shellId]);
 
       const snapshot = await ptyAttach(sid);
       if (disposedRef.current || sessionIdRef.current !== sid) return;
@@ -459,7 +485,7 @@ function TerminalViewComponent({ shell, active }: Props) {
     };
     init().catch((e) => {
       const message = e instanceof Error ? e.message : String(e);
-      setShellStatus(shell.id, "error");
+      setShellStatus(shellId, "error");
       term.writeln(translate(locale, "terminal.startFailed"));
       term.writeln(message);
       console.error("init terminal failed", e);
@@ -480,7 +506,7 @@ function TerminalViewComponent({ shell, active }: Props) {
     // Resize observer
     const ro = new ResizeObserver(() => {
       if (!fitRef.current || !termRef.current) return;
-      if (useAppStore.getState().activeShellId !== shell.id) return;
+      if (useAppStore.getState().activeShellId !== shellId) return;
       try {
         fitRef.current.fit();
       } catch {}
@@ -490,7 +516,7 @@ function TerminalViewComponent({ shell, active }: Props) {
           () => {}
         );
       }
-      setShellSize(shell.id, termRef.current.cols, termRef.current.rows);
+      setShellSize(shellId, termRef.current.cols, termRef.current.rows);
     });
     ro.observe(hostRef.current);
 
@@ -510,7 +536,7 @@ function TerminalViewComponent({ shell, active }: Props) {
       fitRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shell.id]);
+  }, [shellId]);
 
   useEffect(() => {
     if (!termRef.current) return;
@@ -528,7 +554,7 @@ function TerminalViewComponent({ shell, active }: Props) {
     flushPendingResume();
     scheduleResumeFallback();
   }, [
-    shell.id,
+    shellId,
     shell.startupCommand,
   ]);
 
@@ -545,12 +571,12 @@ function TerminalViewComponent({ shell, active }: Props) {
       const sid = sessionIdRef.current;
       if (t && sid) {
         ptyResize(sid, t.rows, t.cols).catch(() => {});
-        setShellSize(shell.id, t.cols, t.rows);
+        setShellSize(shellId, t.cols, t.rows);
       }
     });
-    dismissShellAlert(shell.id);
-    if (shell.needsAttention) setShellAttention(shell.id, false);
-  }, [active, shell.id, shell.needsAttention, setShellAttention, setShellSize]);
+    dismissShellAlert(shellId);
+    if (shell.needsAttention) setShellAttention(shellId, false);
+  }, [active, shellId, shell.needsAttention, setShellAttention, setShellSize]);
 
   const scrollToBottomLabel = translate(locale, "terminal.scrollToBottom");
 
@@ -580,6 +606,18 @@ function TerminalViewComponent({ shell, active }: Props) {
 }
 
 export const TerminalView = memo(TerminalViewComponent);
+
+function handleTerminalWebLink(event: MouseEvent, uri: string) {
+  if (event.button !== 0 || !event.ctrlKey) {
+    return;
+  }
+
+  event.preventDefault();
+  event.stopPropagation();
+  void openUrl(uri).catch((error) => {
+    console.warn("terminal link open failed", { uri, error });
+  });
+}
 
 function handleTerminalShortcut(
   term: Terminal,

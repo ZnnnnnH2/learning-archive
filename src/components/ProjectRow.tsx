@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { message } from "@tauri-apps/plugin-dialog";
 import {
@@ -27,7 +27,7 @@ interface Props {
   projectId: string;
 }
 
-export function ProjectRow({ projectId }: Props) {
+function ProjectRowComponent({ projectId }: Props) {
   const { t } = useI18n();
   const project = useAppStore((s) => s.projects[projectId]);
   const aggregateKey = useAppStore((s) => selectProjectAggregateKey(s, projectId));
@@ -35,7 +35,11 @@ export function ProjectRow({ projectId }: Props) {
   const addShell = useAppStore((s) => s.addShell);
   const removeProject = useAppStore((s) => s.removeProject);
   const renameProject = useAppStore((s) => s.renameProject);
-  const activeShellId = useAppStore((s) => s.activeShellId);
+  const isAnyActive = useAppStore((s) => {
+    const active = s.activeShellId;
+    if (!active) return false;
+    return s.projects[projectId]?.shellIds.includes(active) ?? false;
+  });
   const setActive = useAppStore((s) => s.setActive);
   const [editing, setEditing] = useState(false);
   const [draftName, setDraftName] = useState(project?.name ?? "");
@@ -45,7 +49,6 @@ export function ProjectRow({ projectId }: Props) {
   const aggregate = parseProjectAggregateKey(aggregateKey);
   const aggStatus = aggregate.status;
   const aggAttention = aggregate.needsAttention;
-  const isAnyActive = activeShellId ? shellIds.includes(activeShellId) : false;
 
   const commitRename = () => {
     const name = draftName.trim();
@@ -233,6 +236,8 @@ export function ProjectRow({ projectId }: Props) {
     </ContextMenu.Root>
   );
 }
+
+export const ProjectRow = memo(ProjectRowComponent);
 
 function selectProjectAggregateKey(
   state: ReturnType<typeof useAppStore.getState>,

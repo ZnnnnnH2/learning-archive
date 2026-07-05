@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import * as ContextMenu from "@radix-ui/react-context-menu";
 import { TerminalSquare, X, Pencil, Copy, GitFork, Sparkles } from "lucide-react";
 import { useAppStore } from "../store";
@@ -11,10 +11,10 @@ interface Props {
   shellId: string;
 }
 
-export function ShellRow({ shellId }: Props) {
+function ShellRowComponent({ shellId }: Props) {
   const { t } = useI18n();
   const shell = useAppStore((s) => s.shells[shellId]);
-  const activeShellId = useAppStore((s) => s.activeShellId);
+  const active = useAppStore((s) => s.activeShellId === shellId);
   const setActive = useAppStore((s) => s.setActive);
   const removeShell = useAppStore((s) => s.removeShell);
   const renameShell = useAppStore((s) => s.renameShell);
@@ -24,7 +24,6 @@ export function ShellRow({ shellId }: Props) {
   const [draft, setDraft] = useState("");
 
   if (!shell) return null;
-  const active = activeShellId === shellId;
 
   const commit = () => {
     const n = draft.trim();
@@ -162,6 +161,8 @@ export function ShellRow({ shellId }: Props) {
     </ContextMenu.Root>
   );
 }
+
+export const ShellRow = memo(ShellRowComponent);
 
 function getShellSecondaryPreview(
   shell: Shell,
