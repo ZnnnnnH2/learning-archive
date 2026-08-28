@@ -2,7 +2,7 @@
 
 这是助教/课堂侧的可视化对战程序。学生只提交一个 C++17 单文件 AI；裁判台统一
 维护棋盘、胜负和禁手，学生程序只根据当前局面返回下一手。默认使用“连珠禁手
-（课堂；黑首天元）”，也可切换为无禁手的自由五子棋。
+（课堂；先手首子天元）”，也可切换为无禁手的自由五子棋。
 
 ## Conda 环境与运行
 
@@ -24,12 +24,14 @@ conda run -n gobang-gui python gobang_gui.py
 ## 对战模式
 
 - **玩家 vs C++ 程序**：选择玩家执黑或执白；玩家点击棋盘，另一方由其 C++ 程序落子。
-- **C++ 程序 vs C++ 程序**：分别为黑、白两方选择并编译一个 `.cpp` 文件，点击
-  “开始 / 重新开始”后自动轮流对战。可暂停、继续和单步执行。
+- **C++ 程序 vs C++ 程序**：分别选择并编译两份 `.cpp` 文件后，可设置对战轮次
+  和“胜 / 和 / 负”积分。每盘结束，两个程序会自动交换先手（也就是交换本局黑白），
+  积分表按稳定的选手 A/B 汇总；可暂停、继续、单步或终止系列赛。
 - **自由摆棋**：双方都由鼠标落子，用于演示与局面调试。
 
-“交换黑白程序”应在开始对局前使用。每个 AI 回合都会启动一个**全新的、无状态的
-进程**；黑白双方拥有互不共享的构建目录和可执行文件。
+棋盘可以选择 9×9、11×11、13×13、15×15、17×17 或 19×19；大小会写入每手
+Request。“交换黑白程序”应在开始对局前使用。每个 AI 回合都会启动一个**全新的、
+无状态的进程**；两份程序拥有互不共享的构建目录和可执行文件。
 
 ## 规则与禁手
 
@@ -38,8 +40,9 @@ conda run -n gobang-gui python gobang_gui.py
 
 界面提供两个预设：
 
-- `renju_classroom`（默认）：黑首手 H8；黑方恰五获胜，长连、四四、三三判负；
-  白方五连或长连获胜。
+- `renju_classroom`（默认）：**先手（本局黑方）**首手必须落在当前棋盘天元；
+  先手恰五获胜，长连、四四、三三判负；后手五连或长连获胜。AI 系列赛中每盘交换
+  先手，因此禁手也随本局的先手程序轮换。
 - `freestyle`：无禁手，黑白任一方五连或更多即胜。
 
 ## 固定协议（`gomoku-1.0`）
@@ -63,8 +66,12 @@ conda run -n gobang-gui python gobang_gui.py
     "win_length": 5,
     "black_win": "exactly_five",
     "white_win": "five_or_more",
-    "forbidden_moves": "black_overline_double_four_double_three",
-    "opening": "black_center_H8",
+    "first_player_color": 1,
+    "first_player_win": "exactly_five",
+    "forbidden_moves": "first_player_overline_double_four_double_three",
+    "forbidden_player": "first_player_black",
+    "opening": "first_player_center",
+    "opening_center": [7, 7],
     "adjudication": "automatic",
     "time_limit_ms": 2000
   }
@@ -73,7 +80,8 @@ conda run -n gobang-gui python gobang_gui.py
 
 棋盘中 `0` 为空、`1` 为黑、`2` 为白；所有坐标均为 0-based `[row, col]`。
 `case_id`、`game_id`、`ply`、`player_color` 是新增关联字段。`rules` 也是裁判协议
-的一部分：学生 AI 必须据此跳过禁手点；不要假定任何一局都没有禁手。
+的一部分：学生 AI 必须据此跳过禁手点；其中 `first_player_color: 1` 表示本局的先手
+始终是黑方。不要假定任何一局都没有禁手，也不要把选手身份与固定颜色绑定。
 
 学生程序必须在标准输出只写一行 JSON：
 
@@ -92,8 +100,8 @@ conda run -n gobang-gui python gobang_gui.py
 - 在 **C++ vs C++** 中，超时、崩溃、非零退出、额外 stdout、无效 JSON、`case_id`
   不匹配或非法落子都会使该方判负。
 - 在玩家 vs C++ 中，程序错误会暂停对局并保留局面，方便修正后使用“单步 AI”重试。
-- 无论何种模式，连珠预设下走出黑方禁手均是**规则判负**，不会被当成可重试的
-  程序格式错误。
+- 无论何种模式，连珠预设下走出先手（本局黑方）禁手均是**规则判负**，不会被当成
+  可重试的程序格式错误。
 
 规则单元测试可用以下命令运行：
 

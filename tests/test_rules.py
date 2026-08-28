@@ -36,6 +36,31 @@ class RenjuRuleTests(unittest.TestCase):
         self.assertEqual(verdict.forbidden, "opening")
         self.assertTrue(state.analyze_move(7, 7).legal)
 
+    def test_board_size_changes_center_and_protocol(self) -> None:
+        state = GomokuState(board_size=9, ruleset=RULE_RENJU_CLASSROOM)
+        self.assertEqual(len(state.board), 9)
+        self.assertEqual(len(state.board[0]), 9)
+        self.assertFalse(state.analyze_move(0, 0).legal)
+        self.assertTrue(state.analyze_move(4, 4).legal)
+
+        request = state.request("nine-by-nine", 2000)
+        self.assertEqual(request["board_size"], 9)
+        self.assertEqual(request["rules"]["opening"], "first_player_center")
+        self.assertEqual(request["rules"]["opening_center"], [4, 4])
+        self.assertEqual(request["rules"]["forbidden_player"], "first_player_black")
+
+    def test_first_player_restriction_is_per_game_black_side(self) -> None:
+        state = self.classroom_state()
+        self.put(state, BLACK, (7, 3), (7, 4), (7, 5), (7, 6), (7, 7))
+        verdict = state.analyze_move(7, 8)
+        self.assertFalse(verdict.legal)
+        self.assertEqual(verdict.forbidden, "overline")
+
+        # 下一盘交换的是程序所执的黑白，而不是规则；新先手仍应受到同样限制。
+        next_game = self.classroom_state()
+        self.put(next_game, BLACK, (7, 3), (7, 4), (7, 5), (7, 6), (7, 7))
+        self.assertEqual(next_game.analyze_move(7, 8).forbidden, "overline")
+
     def test_black_exact_five_wins(self) -> None:
         state = self.classroom_state()
         self.put(state, BLACK, (7, 3), (7, 4), (7, 5), (7, 6))
