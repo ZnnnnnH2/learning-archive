@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""五子棋助教端界面原型。
+"""五子棋对战裁判台。
 
-学生只提交一个 C++ 源文件。界面负责：编译源文件、把当前棋盘作为一行 JSON
-写入学生程序 stdin，并读取它输出的一行 JSON 落子结果。
-
-这是一个本地原型，依赖仅为 Python 标准库和 tkinter。
+学生只提交一个 C++ 单文件程序。每个 AI 回合，裁判台都会启动一个全新进程，
+把当前棋局的一行 JSON 写入 stdin，并从 stdout 读取唯一的一行 JSON 落子结果。
+界面本身是可信裁判：它维护棋盘、判定胜负、拒绝非法棋，并记录双方日志。
 """
 
 from __future__ import annotations
@@ -13,11 +12,10 @@ import json
 import os
 import queue
 import shutil
+import signal
 import subprocess
-import sys
 import tempfile
 import threading
-import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +31,15 @@ BOARD_SIZE = 15
 WIN_LENGTH = 5
 STONE_NAME = {BLACK: "黑", WHITE: "白"}
 
+MODE_HUMAN_AI = "human_ai"
+MODE_AI_AI = "ai_ai"
+MODE_DEBUG = "debug"
+HUMAN = "human"
+PROGRAM = "program"
+
+AUTO_STEP_DELAY_MS = 180
+MAX_OUTPUT_CHARS = 1_000_000
+
 
 @dataclass(frozen=True)
 class Move:
@@ -43,7 +50,7 @@ class Move:
 
 @dataclass
 class GomokuState:
-    """界面唯一持有的可信棋局状态。学生程序只给出候选落子。"""
+    """界面唯一持有的可信棋局状态。外部程序只可提交候选落子。"""
 
     board: list[list[int]] = field(
         default_factory=lambda: [[EMPTY] * BOARD_SIZE for _ in range(BOARD_SIZE)]
@@ -91,6 +98,29 @@ class GomokuState:
     def is_draw(self) -> bool:
         return self.winner == EMPTY and len(self.history) == BOARD_SIZE * BOARD_SIZE
 
+    def request(self, game_id: str, time_limit_ms: int) -> dict[str, Any]:
+        """构造兼容旧字段、且能关联对局与回合的新协议请求。"""
+        ply = len(self.history)
+        return {
+            "protocol_version": "gomoku-1.0",
+            "case_id": f"{game_id}:{ply:03d}",
+            "game_id": game_id,
+            "ply": ply,
+            "board_size": BOARD_SIZE,
+            "board": [row.copy() for row in self.board],
+            "side_to_move": self.side_to_move,
+            "player_color": self.side_to_move,
+            "last_move": (
+                [self.last_move.row, self.last_move.col] if self.last_move is not None else None
+            ),
+            "last_move_color": self.last_move.color if self.last_move is not None else None,
+            "rules": {
+                "win_length": WIN_LENGTH,
+                "forbidden_moves": "none",
+                "time_limit_ms": time_limit_ms,
+            },
+        }
+
     def _has_five(self, row: int, col: int, color: int) -> bool:
         for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
             count = 1
@@ -104,31 +134,14 @@ class GomokuState:
                 return True
         return False
 
-    def request(self, case_id: str, time_limit_ms: int) -> dict[str, Any]:
-        return {
-            "protocol_version": "gomoku-1.0",
-            "case_id": case_id,
-            "board_size": BOARD_SIZE,
-            "board": self.board,
-            "side_to_move": self.side_to_move,
-            "last_move": (
-                [self.last_move.row, self.last_move.col] if self.last_move is not None else None
-            ),
-            "rules": {
-                "win_length": WIN_LENGTH,
-                "forbidden_moves": "none",
-                "time_limit_ms": time_limit_ms,
-            },
-        }
-
 
 class StudentProgram:
-    """将学生的一份 C++ 单文件编译成独立程序，并按一手一进程调用。"""
+    """一份学生 C++ 单文件程序及其独立的临时构建目录。"""
 
     def __init__(self) -> None:
         self.source_path: Path | None = None
         self.executable_path: Path | None = None
-        self.build_dir = Path(tempfile.mkdtemp(prefix="gomoku-student-"))
+        self.build_dir = Path(tempfile.mkdtemp(prefix="gomoku-player-"))
 
     @staticmethod
     def find_compiler() -> str | None:
@@ -137,18 +150,35 @@ class StudentProgram:
             return configured
         return shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
 
-    def compile(self, source_path: Path) -> tuple[bool, str]:
+    @property
+    def label(self) -> str:
+        return self.source_path.name if self.source_path is not None else "未选择程序"
+
+    @property
+    def is_ready(self) -> bool:
+        return self.executable_path is not None and self.executable_path.exists()
+
+    def select_source(self, source_path: Path) -> None:
+        self.source_path = source_path
+        self.executable_path = None
+
+    def compile(self) -> tuple[bool, str]:
+        if self.source_path is None:
+            return False, "请先选择学生的 .cpp 文件。"
+        self.executable_path = None
         compiler = self.find_compiler()
         if compiler is None:
             return False, "未找到 C++ 编译器。请安装或把 CXX 指向 c++ / g++ / clang++。"
 
         suffix = ".exe" if os.name == "nt" else ""
         executable = self.build_dir / f"student_solver{suffix}"
-        command = [compiler, "-std=c++17", "-O2", str(source_path), "-o", str(executable)]
+        command = [compiler, "-std=c++17", "-O2", str(self.source_path), "-o", str(executable)]
         try:
             result = subprocess.run(
                 command,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 timeout=20,
@@ -159,39 +189,56 @@ class StudentProgram:
         except OSError as error:
             return False, f"无法启动编译器：{error}"
 
-        compiler_text = (result.stdout + result.stderr).strip()
+        compiler_text = self._limit_text(result.stdout + result.stderr)
         if result.returncode != 0 or not executable.exists():
             detail = compiler_text or f"编译失败（退出码 {result.returncode}）"
             return False, detail
 
-        self.source_path = source_path
         self.executable_path = executable
         return True, compiler_text or "编译成功。"
 
-    def run_one_move(self, request: dict[str, Any], timeout_ms: int) -> tuple[bool, str, dict[str, Any] | None]:
-        if self.executable_path is None:
-            return False, "请先选择并编译学生的 C++ 源文件。", None
+    def run_one_move(
+        self,
+        request: dict[str, Any],
+        timeout_ms: int,
+        *,
+        require_case_id: bool,
+    ) -> tuple[bool, str, dict[str, Any] | None]:
+        if not self.is_ready or self.executable_path is None:
+            return False, "该方程序尚未编译。", None
 
         stdin_text = json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n"
+        process: subprocess.Popen[str] | None = None
         try:
             process = subprocess.Popen(
                 [str(self.executable_path)],
+                cwd=str(self.build_dir),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                start_new_session=os.name == "posix",
             )
             stdout, stderr = process.communicate(stdin_text, timeout=timeout_ms / 1000)
         except subprocess.TimeoutExpired:
-            process.kill()
-            stdout, stderr = process.communicate()
-            return False, f"程序超过 {timeout_ms} ms，已停止。\nstderr:\n{stderr.strip()}", None
+            if process is not None:
+                self._terminate_process(process)
+                stdout, stderr = process.communicate()
+            else:
+                stdout, stderr = "", ""
+            return False, f"程序超过 {timeout_ms} ms，已停止。\nstderr:\n{self._limit_text(stderr).strip()}", None
         except OSError as error:
             return False, f"无法启动学生程序：{error}", None
 
+        stdout = self._limit_text(stdout)
+        stderr = self._limit_text(stderr)
         stderr_text = stderr.strip()
         if process.returncode != 0:
             return False, f"学生程序异常退出（退出码 {process.returncode}）。\nstderr:\n{stderr_text}", None
+        if len(stdout) >= MAX_OUTPUT_CHARS or len(stderr) >= MAX_OUTPUT_CHARS:
+            return False, "程序输出超过 1 MiB 限制。", None
 
         nonempty_lines = [line for line in stdout.splitlines() if line.strip()]
         if len(nonempty_lines) != 1:
@@ -207,11 +254,14 @@ class StudentProgram:
             return False, f"stdout 不是合法 JSON：{error}\n原文：{nonempty_lines[0]}", None
         if not isinstance(response, dict):
             return False, "Response 必须是 JSON 对象。", None
-        if response.get("case_id") not in (None, request["case_id"]):
+
+        expected_case_id = request["case_id"]
+        if require_case_id and response.get("case_id") != expected_case_id:
+            return False, f"Response 必须携带匹配的 case_id：{expected_case_id}。", None
+        if not require_case_id and response.get("case_id") not in (None, expected_case_id):
             return False, "Response 的 case_id 与 Request 不匹配。", None
-        if "move" not in response:
-            return False, "Response 缺少 move；规范格式为 {\"move\":[row,col]}。", None
-        move = response["move"]
+
+        move = response.get("move")
         if not (
             isinstance(move, list)
             and len(move) == 2
@@ -224,32 +274,69 @@ class StudentProgram:
             log += f"\nstderr:\n{stderr_text}"
         return True, log, response
 
+    @staticmethod
+    def _limit_text(text: str) -> str:
+        if len(text) < MAX_OUTPUT_CHARS:
+            return text
+        return text[:MAX_OUTPUT_CHARS] + "\n[输出已截断]"
+
+    @staticmethod
+    def _terminate_process(process: subprocess.Popen[str]) -> None:
+        if os.name == "posix":
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+                return
+            except (ProcessLookupError, PermissionError):
+                pass
+        process.kill()
+
     def close(self) -> None:
         shutil.rmtree(self.build_dir, ignore_errors=True)
+
+
+@dataclass
+class PlayerSlot:
+    program: StudentProgram = field(default_factory=StudentProgram)
+    kind: str = HUMAN
 
 
 class GomokuApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
-        self.root.title("五子棋助教端原型")
-        self.root.minsize(980, 720)
-        self.root.geometry("1220x820")
+        self.root.title("五子棋对战裁判台")
+        self.root.minsize(1120, 740)
+        self.root.geometry("1360x860")
 
         self.state = GomokuState()
-        self.student = StudentProgram()
-        self.jobs: queue.Queue[tuple[str, Any]] = queue.Queue()
+        self.players = {BLACK: PlayerSlot(), WHITE: PlayerSlot()}
+        self.jobs: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.busy = False
-        self.case_number = 0
-        self.board_margin = 42.0
+        self.match_active = False
+        self.paused = False
+        self.game_id = self._new_game_id()
+        self.revision = 0
+        self.forfeit_color: int | None = None
+        self.result_detail = ""
+
         self.board_cell = 40.0
         self.board_origin = (42.0, 42.0)
 
-        self.status_var = StringVar(value="黑方先行：点击棋盘手动落子，或先构造局面再调用学生程序。")
-        self.source_var = StringVar(value="未选择 C++ 源文件")
+        self.mode_var = StringVar(value=MODE_HUMAN_AI)
+        self.human_color_var = StringVar(value="black")
         self.time_limit_var = StringVar(value="2000")
+        self.status_var = StringVar(value="请选择模式和选手，随后点击“开始 / 重新开始”。")
         self.turn_var = StringVar()
         self.position_var = StringVar()
+        self.player_role_vars = {BLACK: StringVar(), WHITE: StringVar()}
+        self.player_source_vars = {BLACK: StringVar(), WHITE: StringVar()}
+        self.player_build_vars = {BLACK: StringVar(), WHITE: StringVar()}
+        self.player_choose_buttons: dict[int, ttk.Button] = {}
+        self.player_compile_buttons: dict[int, ttk.Button] = {}
+        self.mode_widgets: list[ttk.Widget] = []
+        self.human_color_widgets: list[ttk.Widget] = []
+
         self._build_ui()
+        self._apply_mode()
         self._refresh()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.after(60, self._poll_jobs)
@@ -260,6 +347,7 @@ class GomokuApp:
             style.theme_use("clam")
         style.configure("Title.TLabel", font=("Helvetica", 16, "bold"))
         style.configure("Status.TLabel", font=("Helvetica", 11, "bold"))
+        style.configure("Player.TLabel", font=("Helvetica", 11, "bold"))
 
         outer = ttk.Frame(self.root, padding=12)
         outer.pack(fill="both", expand=True)
@@ -267,10 +355,10 @@ class GomokuApp:
         outer.columnconfigure(1, weight=0)
         outer.rowconfigure(1, weight=1)
 
-        ttk.Label(outer, text="五子棋 · 人机对弈验收原型", style="Title.TLabel").grid(
+        ttk.Label(outer, text="五子棋 · 对战裁判台", style="Title.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(outer, textvariable=self.status_var, style="Status.TLabel").grid(
+        ttk.Label(outer, textvariable=self.status_var, style="Status.TLabel", wraplength=520).grid(
             row=0, column=1, sticky="e", padx=(16, 0)
         )
 
@@ -290,26 +378,60 @@ class GomokuApp:
 
         controls = ttk.Frame(board_area, padding=(0, 10, 0, 0))
         controls.grid(row=1, column=0, sticky="ew")
-        ttk.Button(controls, text="新对局", command=self._new_game).pack(side="left")
-        ttk.Button(controls, text="悔一步", command=self._undo).pack(side="left", padx=6)
-        self.run_button = ttk.Button(controls, text="让学生程序走当前方", command=self._run_student)
-        self.run_button.pack(side="left")
+        self.start_button = ttk.Button(controls, text="开始 / 重新开始", command=self._start_match)
+        self.start_button.pack(side="left")
+        self.pause_button = ttk.Button(controls, text="暂停", command=self._pause_or_resume)
+        self.pause_button.pack(side="left", padx=6)
+        self.step_button = ttk.Button(controls, text="单步 AI", command=self._single_step)
+        self.step_button.pack(side="left")
+        self.undo_button = ttk.Button(controls, text="悔一步", command=self._undo)
+        self.undo_button.pack(side="left", padx=6)
+        self.swap_button = ttk.Button(controls, text="交换黑白程序", command=self._swap_players)
+        self.swap_button.pack(side="left")
         ttk.Button(controls, text="复制当前 Request", command=self._copy_request).pack(side="right")
 
-        side = ttk.Frame(outer, width=370)
+        side = ttk.Frame(outer, width=430)
         side.grid(row=1, column=1, sticky="ns", padx=(14, 0), pady=(12, 0))
         side.grid_propagate(False)
 
-        submission = ttk.LabelFrame(side, text="学生单文件程序", padding=10)
-        submission.pack(fill="x")
-        ttk.Label(submission, textvariable=self.source_var, wraplength=330).pack(anchor="w")
-        submission_buttons = ttk.Frame(submission)
-        submission_buttons.pack(fill="x", pady=(8, 0))
-        ttk.Button(submission_buttons, text="选择 .cpp", command=self._choose_source).pack(side="left")
-        self.compile_button = ttk.Button(submission_buttons, text="编译", command=self._compile_student)
-        self.compile_button.pack(side="left", padx=6)
-        ttk.Label(submission_buttons, text="单步限时 (ms)").pack(side="left", padx=(12, 4))
-        ttk.Entry(submission_buttons, textvariable=self.time_limit_var, width=7).pack(side="left")
+        mode_box = ttk.LabelFrame(side, text="对战模式", padding=10)
+        mode_box.pack(fill="x")
+        for value, text in (
+            (MODE_HUMAN_AI, "玩家 vs C++ 程序"),
+            (MODE_AI_AI, "C++ 程序 vs C++ 程序"),
+            (MODE_DEBUG, "自由摆棋（调试）"),
+        ):
+            widget = ttk.Radiobutton(
+                mode_box,
+                text=text,
+                value=value,
+                variable=self.mode_var,
+                command=self._on_mode_changed,
+            )
+            widget.pack(anchor="w")
+            self.mode_widgets.append(widget)
+
+        human_side = ttk.Frame(mode_box)
+        human_side.pack(fill="x", pady=(6, 0))
+        ttk.Label(human_side, text="玩家执：").pack(side="left")
+        for value, text in (("black", "黑"), ("white", "白")):
+            widget = ttk.Radiobutton(
+                human_side,
+                text=text,
+                value=value,
+                variable=self.human_color_var,
+                command=self._on_human_color_changed,
+            )
+            widget.pack(side="left", padx=(4, 0))
+            self.human_color_widgets.append(widget)
+
+        limits = ttk.Frame(mode_box)
+        limits.pack(fill="x", pady=(6, 0))
+        ttk.Label(limits, text="每手限时 (ms)：").pack(side="left")
+        ttk.Entry(limits, textvariable=self.time_limit_var, width=8).pack(side="left")
+
+        self._build_player_card(side, BLACK)
+        self._build_player_card(side, WHITE)
 
         state_box = ttk.LabelFrame(side, text="棋局", padding=10)
         state_box.pack(fill="x", pady=(10, 0))
@@ -317,58 +439,187 @@ class GomokuApp:
         ttk.Label(state_box, textvariable=self.position_var).pack(anchor="w", pady=(3, 0))
         ttk.Label(
             state_box,
-            text="坐标采用 0-based [row,col]；棋盘上显示 A–O 与 1–15。",
+            text="坐标为 0-based [row,col]；棋盘标注为 A–O 与 1–15。",
             foreground="#555555",
-            wraplength=330,
+            wraplength=390,
         ).pack(anchor="w", pady=(7, 0))
 
-        request_box = ttk.LabelFrame(side, text="发给学生程序的 Request", padding=6)
+        request_box = ttk.LabelFrame(side, text="当前 Request（调试）", padding=6)
         request_box.pack(fill="both", expand=True, pady=(10, 0))
         self.request_text = scrolledtext.ScrolledText(
-            request_box, height=11, wrap="word", font=("Menlo", 10), state="disabled"
+            request_box, height=10, wrap="word", font=("Menlo", 10), state="disabled"
         )
         self.request_text.pack(fill="both", expand=True)
 
-        log_box = ttk.LabelFrame(side, text="编译 / 程序日志", padding=6)
+        log_box = ttk.LabelFrame(side, text="对局 / 编译日志", padding=6)
         log_box.pack(fill="both", expand=True, pady=(10, 0))
         self.log_text = scrolledtext.ScrolledText(
-            log_box, height=11, wrap="word", font=("Menlo", 10), state="disabled"
+            log_box, height=10, wrap="word", font=("Menlo", 10), state="disabled"
         )
         self.log_text.pack(fill="both", expand=True)
 
-    def _time_limit(self) -> int | None:
+    def _build_player_card(self, parent: ttk.Frame, color: int) -> None:
+        card = ttk.LabelFrame(parent, text=f"{STONE_NAME[color]}方选手", padding=10)
+        card.pack(fill="x", pady=(10, 0))
+        ttk.Label(card, textvariable=self.player_role_vars[color], style="Player.TLabel").pack(anchor="w")
+        ttk.Label(card, textvariable=self.player_source_vars[color], wraplength=390).pack(
+            anchor="w", pady=(3, 0)
+        )
+        buttons = ttk.Frame(card)
+        buttons.pack(fill="x", pady=(7, 0))
+        choose = ttk.Button(buttons, text="选择 .cpp", command=lambda c=color: self._choose_source(c))
+        choose.pack(side="left")
+        compile_button = ttk.Button(buttons, text="编译", command=lambda c=color: self._compile_player(c))
+        compile_button.pack(side="left", padx=6)
+        ttk.Label(buttons, textvariable=self.player_build_vars[color], foreground="#555555").pack(
+            side="left", padx=(6, 0)
+        )
+        self.player_choose_buttons[color] = choose
+        self.player_compile_buttons[color] = compile_button
+
+    def _time_limit(self, *, show_error: bool = True) -> int | None:
         try:
             value = int(self.time_limit_var.get())
         except ValueError:
-            self._set_status("单步限时必须是正整数。", error=True)
+            if show_error:
+                self._set_status("单步限时必须是正整数。", error=True)
             return None
         if not 50 <= value <= 60_000:
-            self._set_status("单步限时请设在 50–60000 ms。", error=True)
+            if show_error:
+                self._set_status("单步限时请设在 50–60000 ms。", error=True)
             return None
         return value
 
-    def _request(self) -> dict[str, Any] | None:
-        limit = self._time_limit()
+    def _current_request(self, *, show_error: bool = False) -> dict[str, Any] | None:
+        limit = self._time_limit(show_error=show_error)
         if limit is None:
             return None
-        return self.state.request(f"live-{self.case_number:04d}", limit)
+        return self.state.request(self.game_id, limit)
+
+    def _apply_mode(self) -> None:
+        mode = self.mode_var.get()
+        if mode == MODE_AI_AI:
+            self.players[BLACK].kind = PROGRAM
+            self.players[WHITE].kind = PROGRAM
+        elif mode == MODE_HUMAN_AI:
+            human_color = BLACK if self.human_color_var.get() == "black" else WHITE
+            self.players[BLACK].kind = HUMAN if BLACK == human_color else PROGRAM
+            self.players[WHITE].kind = HUMAN if WHITE == human_color else PROGRAM
+        else:
+            self.players[BLACK].kind = HUMAN
+            self.players[WHITE].kind = HUMAN
+
+    def _on_mode_changed(self) -> None:
+        if self.busy:
+            return
+        self.match_active = False
+        self.paused = False
+        self._apply_mode()
+        self._set_status("模式已切换；点击“开始 / 重新开始”会建立新对局。")
+        self._refresh()
+
+    def _on_human_color_changed(self) -> None:
+        if self.mode_var.get() != MODE_HUMAN_AI or self.busy:
+            return
+        self.match_active = False
+        self.paused = False
+        self._apply_mode()
+        self._set_status("玩家执子已切换；点击“开始 / 重新开始”会建立新对局。")
+        self._refresh()
+
+    def _required_program_colors(self) -> list[int]:
+        return [color for color in (BLACK, WHITE) if self.players[color].kind == PROGRAM]
+
+    def _finished(self) -> bool:
+        return bool(self.result_detail) or self.state.winner != EMPTY or self.state.is_draw()
+
+    def _result_text(self) -> str:
+        if self.forfeit_color is not None:
+            winner = WHITE if self.forfeit_color == BLACK else BLACK
+            return (
+                f"对局结束：{STONE_NAME[winner]}方获胜"
+                f"（{STONE_NAME[self.forfeit_color]}方判负：{self.result_detail}）"
+            )
+        if self.state.winner:
+            return f"对局结束：{STONE_NAME[self.state.winner]}方五连获胜"
+        if self.state.is_draw():
+            return "对局结束：和棋"
+        return ""
 
     def _refresh(self) -> None:
-        if self.state.winner:
-            self.turn_var.set(f"对局结束：{STONE_NAME[self.state.winner]}方五连获胜")
-        elif self.state.is_draw():
-            self.turn_var.set("对局结束：和棋")
+        if self._finished():
+            self.turn_var.set(self._result_text())
+        elif not self.match_active:
+            self.turn_var.set("尚未开始；配置后点击“开始 / 重新开始”。")
+        elif self.paused:
+            self.turn_var.set(f"已暂停：轮到 {STONE_NAME[self.state.side_to_move]}方")
         else:
-            self.turn_var.set(f"轮到 {STONE_NAME[self.state.side_to_move]}方落子")
+            kind = self.players[self.state.side_to_move].kind
+            detail = "等待玩家点击棋盘" if kind == HUMAN else "正在由 C++ 程序计算"
+            self.turn_var.set(f"轮到 {STONE_NAME[self.state.side_to_move]}方：{detail}")
 
         last = "无"
         if self.state.last_move:
-            last = f"{STONE_NAME[self.state.last_move.color]} {self._coordinate(self.state.last_move.row, self.state.last_move.col)}"
-        self.position_var.set(f"已落 {len(self.state.history)} 手；上一手：{last}")
-        request = self._request()
+            last = (
+                f"{STONE_NAME[self.state.last_move.color]} "
+                f"{self._coordinate(self.state.last_move.row, self.state.last_move.col)}"
+            )
+        self.position_var.set(f"对局 {self.game_id}；已落 {len(self.state.history)} 手；上一手：{last}")
+
+        request = self._current_request()
         if request is not None:
             self._set_text(self.request_text, json.dumps(request, ensure_ascii=False, indent=2))
+        self._refresh_player_cards()
+        self._refresh_controls()
         self._draw_board()
+
+    def _refresh_player_cards(self) -> None:
+        for color in (BLACK, WHITE):
+            slot = self.players[color]
+            if slot.kind == HUMAN:
+                self.player_role_vars[color].set("人类玩家（点击棋盘落子）")
+            else:
+                self.player_role_vars[color].set("C++ 程序（每手启动一个新进程）")
+
+            if slot.program.source_path is None:
+                self.player_source_vars[color].set("未选择 .cpp 文件")
+                self.player_build_vars[color].set("待选择")
+            else:
+                self.player_source_vars[color].set(str(slot.program.source_path))
+                self.player_build_vars[color].set("已编译" if slot.program.is_ready else "待编译")
+
+    def _refresh_controls(self) -> None:
+        match_configuration_enabled = not self.busy and not self.match_active
+        for widget in self.mode_widgets:
+            widget.configure(state="normal" if match_configuration_enabled else "disabled")
+        human_side_enabled = match_configuration_enabled and self.mode_var.get() == MODE_HUMAN_AI
+        for widget in self.human_color_widgets:
+            widget.configure(state="normal" if human_side_enabled else "disabled")
+
+        for color in (BLACK, WHITE):
+            program_enabled = match_configuration_enabled and self.players[color].kind == PROGRAM
+            self.player_choose_buttons[color].configure(state="normal" if program_enabled else "disabled")
+            can_compile = (
+                not self.busy
+                and (not self.match_active or self.paused)
+                and self.players[color].kind == PROGRAM
+                and self.players[color].program.source_path is not None
+            )
+            self.player_compile_buttons[color].configure(state="normal" if can_compile else "disabled")
+
+        self.start_button.configure(state="normal" if not self.busy else "disabled")
+        pause_enabled = self.match_active and not self._finished()
+        self.pause_button.configure(state="normal" if pause_enabled else "disabled")
+        self.pause_button.configure(text="继续" if self.paused else "暂停")
+        step_enabled = self.match_active and not self.busy and not self._finished()
+        self.step_button.configure(state="normal" if step_enabled else "disabled")
+        undo_enabled = (
+            not self.busy
+            and bool(self.state.history)
+            and (not self.match_active or self.paused or self._finished())
+        )
+        self.undo_button.configure(state="normal" if undo_enabled else "disabled")
+        self.swap_button.configure(state="normal" if match_configuration_enabled else "disabled")
 
     def _draw_board(self) -> None:
         canvas = self.board_canvas
@@ -379,7 +630,6 @@ class GomokuApp:
         board_pixels = cell * (BOARD_SIZE - 1)
         x0 = (width - board_pixels) / 2
         y0 = (height - board_pixels) / 2
-        self.board_margin = margin
         self.board_cell = cell
         self.board_origin = (x0, y0)
 
@@ -417,82 +667,184 @@ class GomokuApp:
             canvas.create_oval(x - marker, y - marker, x + marker, y + marker, fill="#e34b2d", outline="")
 
     def _on_board_click(self, event: tk.Event[tk.Misc]) -> None:
+        if self.busy:
+            self._set_status("正在等待 C++ 程序返回，本回合棋盘已锁定。", error=True)
+            return
+        if not self.match_active:
+            self._set_status("请先点击“开始 / 重新开始”。", error=True)
+            return
+        if self.paused:
+            self._set_status("对局已暂停；请继续对局后再落子。", error=True)
+            return
+        if self._finished():
+            self._set_status(self._result_text(), error=True)
+            return
+        if self.players[self.state.side_to_move].kind != HUMAN:
+            self._set_status(f"现在轮到 {STONE_NAME[self.state.side_to_move]}方程序落子。", error=True)
+            return
+
         x0, y0 = self.board_origin
         col = round((event.x - x0) / self.board_cell)
         row = round((event.y - y0) / self.board_cell)
         x = x0 + col * self.board_cell
         y = y0 + row * self.board_cell
-        if not self.state.in_bounds(row, col) or abs(event.x - x) > self.board_cell * 0.45 or abs(event.y - y) > self.board_cell * 0.45:
+        if (
+            not self.state.in_bounds(row, col)
+            or abs(event.x - x) > self.board_cell * 0.45
+            or abs(event.y - y) > self.board_cell * 0.45
+        ):
             return
         try:
             move = self.state.play(row, col)
         except ValueError as error:
             self._set_status(str(error), error=True)
             return
-        self.case_number += 1
-        self._set_status(f"手动落子：{STONE_NAME[move.color]} {self._coordinate(row, col)}")
-        self._refresh()
+        self.revision += 1
+        self._append_log(
+            f"[{STONE_NAME[move.color]} / 人类 / 第 {len(self.state.history)} 手] "
+            f"{self._coordinate(row, col)}\n"
+        )
+        self._set_status(f"玩家落子：{STONE_NAME[move.color]} {self._coordinate(row, col)}")
+        self._after_move(auto_continue=True)
 
-    def _new_game(self) -> None:
+    def _start_match(self) -> None:
         if self.busy:
             return
+        missing = [
+            STONE_NAME[color]
+            for color in self._required_program_colors()
+            if not self.players[color].program.is_ready
+        ]
+        if missing:
+            self._set_status(f"请先编译{'、'.join(missing)}方的 C++ 程序。", error=True)
+            return
+
         self.state.reset()
-        self.case_number += 1
-        self._set_status("新对局已开始：黑方先行。")
+        self.game_id = self._new_game_id()
+        self.revision += 1
+        self.match_active = True
+        self.paused = False
+        self.forfeit_color = None
+        self.result_detail = ""
+        self._append_log(f"\n[新对局 {self.game_id}] 模式：{self._mode_name()}\n")
+        self._set_status("对局开始：黑方先行。")
         self._refresh()
+        self._advance_turn()
+
+    def _pause_or_resume(self) -> None:
+        if not self.match_active or self._finished():
+            return
+        if self.paused:
+            self.paused = False
+            self._set_status("对局继续。")
+            self._refresh()
+            self._advance_turn()
+            return
+
+        self.paused = True
+        if self.busy:
+            self._set_status("将在当前程序回合结束后暂停。")
+        else:
+            self._set_status("对局已暂停。")
+        self._refresh()
+
+    def _single_step(self) -> None:
+        if self.busy or not self.match_active or self._finished():
+            return
+        color = self.state.side_to_move
+        if self.players[color].kind == HUMAN:
+            self._set_status(f"当前轮到 {STONE_NAME[color]}方人类，请点击棋盘落子。", error=True)
+            return
+        self.paused = True
+        self._request_program_move(color, auto_continue=False)
 
     def _undo(self) -> None:
         if self.busy:
+            return
+        if self.match_active and not self.paused and not self._finished():
+            self._set_status("请先暂停对局，再悔棋。", error=True)
             return
         move = self.state.undo()
         if move is None:
             self._set_status("当前没有可悔的棋。", error=True)
             return
-        self.case_number += 1
-        self._set_status(f"已撤销 {STONE_NAME[move.color]} {self._coordinate(move.row, move.col)}")
+        self.revision += 1
+        self.match_active = True
+        self.paused = True
+        self.forfeit_color = None
+        self.result_detail = ""
+        self._append_log(
+            f"[裁判] 撤销 {STONE_NAME[move.color]} {self._coordinate(move.row, move.col)}\n"
+        )
+        self._set_status("已悔一步；对局保持暂停。")
         self._refresh()
 
-    def _choose_source(self) -> None:
+    def _swap_players(self) -> None:
+        if self.busy or self.match_active:
+            self._set_status("请在开始对局前交换黑白程序。", error=True)
+            return
+        self.players[BLACK], self.players[WHITE] = self.players[WHITE], self.players[BLACK]
+        self._apply_mode()
+        self._set_status("黑白方的程序槽位已交换。")
+        self._refresh()
+
+    def _choose_source(self, color: int) -> None:
+        if self.busy or self.match_active:
+            return
         filename = filedialog.askopenfilename(
             parent=self.root,
-            title="选择学生提交的 C++ 单文件",
+            title=f"选择{STONE_NAME[color]}方提交的 C++ 单文件",
             filetypes=[("C++ source", "*.cpp *.cc *.cxx *.C"), ("All files", "*.*")],
         )
         if not filename:
             return
-        path = Path(filename)
-        self.student.source_path = path
-        self.student.executable_path = None
-        self.source_var.set(str(path))
-        self._set_status("已选择源文件；请点击“编译”。")
+        self.players[color].program.select_source(Path(filename))
+        self._set_status(f"已选择{STONE_NAME[color]}方源文件；请点击“编译”。")
+        self._refresh()
 
-    def _compile_student(self) -> None:
-        if self.busy:
+    def _compile_player(self, color: int) -> None:
+        if self.busy or (self.match_active and not self.paused):
             return
-        source = self.student.source_path
-        if source is None:
-            self._set_status("请先选择学生的 .cpp 文件。", error=True)
+        program = self.players[color].program
+        if program.source_path is None:
+            self._set_status(f"请先选择{STONE_NAME[color]}方的 .cpp 文件。", error=True)
             return
-        self._set_busy(True, "正在编译学生程序…")
+        self._set_busy(True, f"正在编译{STONE_NAME[color]}方程序…")
 
         def work() -> None:
-            self.jobs.put(("compile", self.student.compile(source)))
+            self.jobs.put(("compile", color, program.compile()))
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _run_student(self) -> None:
-        if self.busy:
+    def _advance_turn(self) -> None:
+        if self.busy or self.paused or not self.match_active or self._finished():
             return
-        if self.state.winner or self.state.is_draw():
-            self._set_status("对局已结束；请新开对局或悔棋。", error=True)
+        color = self.state.side_to_move
+        if self.players[color].kind == HUMAN:
+            self._set_status(f"轮到 {STONE_NAME[color]}方玩家落子。")
+            self._refresh()
             return
-        request = self._request()
+        self._request_program_move(color, auto_continue=True)
+
+    def _request_program_move(self, color: int, *, auto_continue: bool) -> None:
+        if self.busy or self._finished() or self.state.side_to_move != color:
+            return
+        request = self._current_request(show_error=True)
         if request is None:
             return
-        self._set_busy(True, f"正在请求学生程序为 {STONE_NAME[self.state.side_to_move]}方落子…")
+        program = self.players[color].program
+        game_id = self.game_id
+        revision = self.revision
+        strict_case_id = self.mode_var.get() == MODE_AI_AI
+        self._set_busy(True, f"正在请求{STONE_NAME[color]}方程序 {program.label} 落子…")
 
         def work() -> None:
-            self.jobs.put(("run", self.student.run_one_move(request, request["rules"]["time_limit_ms"]), request))
+            result = program.run_one_move(
+                request,
+                request["rules"]["time_limit_ms"],
+                require_case_id=strict_case_id,
+            )
+            self.jobs.put(("move", color, game_id, revision, auto_continue, program.label, result))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -502,35 +854,80 @@ class GomokuApp:
                 item = self.jobs.get_nowait()
                 kind = item[0]
                 if kind == "compile":
-                    ok, message = item[1]
-                    self._append_log(f"[编译]\n{message}\n")
+                    _, color, result = item
+                    ok, message = result
+                    self._append_log(f"[{STONE_NAME[color]} / 编译]\n{message}\n")
                     self._set_busy(False)
-                    self._set_status("编译成功，可以调用程序。" if ok else "编译失败，请查看日志。", error=not ok)
-                elif kind == "run":
-                    ok, message, response = item[1]
-                    self._append_log(f"[第 {len(self.state.history) + 1} 手]\n{message}\n")
-                    self._set_busy(False)
-                    if not ok or response is None:
-                        self._set_status("学生程序未给出有效落子，请查看日志。", error=True)
-                    else:
-                        row, col = response["move"]
-                        if not self.state.is_legal(row, col):
-                            self._set_status(
-                                f"程序返回非法落子 [{row},{col}]，已拒绝执行。", error=True
-                            )
-                        else:
-                            move = self.state.play(row, col)
-                            self.case_number += 1
-                            self._set_status(
-                                f"学生程序已落子：{STONE_NAME[move.color]} {self._coordinate(row, col)}"
-                            )
+                    self._set_status(
+                        f"{STONE_NAME[color]}方程序编译成功。" if ok else f"{STONE_NAME[color]}方程序编译失败。",
+                        error=not ok,
+                    )
                     self._refresh()
+                elif kind == "move":
+                    _, color, game_id, revision, auto_continue, program_label, result = item
+                    ok, message, response = result
+                    self._set_busy(False)
+                    if game_id != self.game_id or revision != self.revision or color != self.state.side_to_move:
+                        self._append_log(f"[{STONE_NAME[color]} / {program_label}] 已丢弃过期响应。\n")
+                        self._refresh()
+                        continue
+
+                    self._append_log(
+                        f"[{STONE_NAME[color]} / {program_label} / 第 {len(self.state.history) + 1} 手]\n"
+                        f"{message}\n"
+                    )
+                    if not ok or response is None:
+                        self._handle_program_failure(color, message.splitlines()[0] or "程序未给出有效落子")
+                        self._refresh()
+                        continue
+
+                    row, col = response["move"]
+                    if not self.state.is_legal(row, col):
+                        self._handle_program_failure(color, f"非法落子 [{row},{col}]")
+                        self._refresh()
+                        continue
+
+                    move = self.state.play(row, col)
+                    self.revision += 1
+                    self._set_status(
+                        f"{STONE_NAME[move.color]}方程序落子：{self._coordinate(row, col)}"
+                    )
+                    self._after_move(auto_continue=auto_continue)
         except queue.Empty:
             pass
         self.root.after(60, self._poll_jobs)
 
+    def _handle_program_failure(self, color: int, reason: str) -> None:
+        if self.mode_var.get() == MODE_AI_AI:
+            self.forfeit_color = color
+            self.result_detail = reason
+            self.match_active = False
+            self.paused = False
+            self._set_status(self._result_text(), error=True)
+            self._append_log(f"[裁判] {STONE_NAME[color]}方判负：{reason}\n")
+        else:
+            self.paused = True
+            self._set_status(f"{STONE_NAME[color]}方程序出错：{reason}。已暂停，可修正后单步重试。", error=True)
+
+    def _after_move(self, *, auto_continue: bool) -> None:
+        if self.state.winner or self.state.is_draw():
+            self.match_active = False
+            self.paused = False
+            self._set_status(self._result_text())
+            self._refresh()
+            return
+
+        if not auto_continue:
+            self.paused = True
+            self._set_status("已完成一个 AI 单步；对局保持暂停。")
+            self._refresh()
+            return
+
+        self._refresh()
+        self.root.after(AUTO_STEP_DELAY_MS, self._advance_turn)
+
     def _copy_request(self) -> None:
-        request = self._request()
+        request = self._current_request(show_error=True)
         if request is None:
             return
         text = json.dumps(request, ensure_ascii=False, indent=2)
@@ -540,11 +937,9 @@ class GomokuApp:
 
     def _set_busy(self, busy: bool, status: str | None = None) -> None:
         self.busy = busy
-        state = "disabled" if busy else "normal"
-        self.run_button.configure(state=state)
-        self.compile_button.configure(state=state)
         if status:
             self._set_status(status)
+        self._refresh_controls()
 
     def _set_status(self, message: str, error: bool = False) -> None:
         self.status_var.set(("错误：" if error else "") + message)
@@ -566,10 +961,22 @@ class GomokuApp:
     def _coordinate(row: int, col: int) -> str:
         return f"{chr(ord('A') + col)}{row + 1}（[{row},{col}]）"
 
+    @staticmethod
+    def _new_game_id() -> str:
+        return uuid.uuid4().hex[:8]
+
+    def _mode_name(self) -> str:
+        return {
+            MODE_HUMAN_AI: "玩家 vs C++",
+            MODE_AI_AI: "C++ vs C++",
+            MODE_DEBUG: "自由摆棋",
+        }[self.mode_var.get()]
+
     def _on_close(self) -> None:
         if self.busy and not messagebox.askyesno("正在运行", "学生程序仍在运行。确定退出吗？", parent=self.root):
             return
-        self.student.close()
+        for slot in self.players.values():
+            slot.program.close()
         self.root.destroy()
 
 
