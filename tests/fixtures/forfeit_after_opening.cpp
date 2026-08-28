@@ -25,6 +25,8 @@ int main() {
 
     const int row = ply == 0 ? board_size / 2 : board_size;
     const int col = ply == 0 ? board_size / 2 : board_size;
+    std::cout << "debug: received ply=" << ply << '\n';
     std::cout << "{\"case_id\":\"" << case_id << "\",\"move\":[" << row << ',' << col
               << "]}" << std::endl;
+    std::cout << "debug: response emitted" << std::endl;
 }

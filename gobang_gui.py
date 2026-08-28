@@ -19,6 +19,7 @@ import tempfile
 import threading
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from tkinter import StringVar, Tk, filedialog, messagebox, scrolledtext, ttk
 import tkinter as tk
@@ -48,7 +49,9 @@ HUMAN = "human"
 PROGRAM = "program"
 
 AUTO_STEP_DELAY_MS = 180
+REPLAY_STEP_DELAY_MS = 450
 MAX_OUTPUT_CHARS = 1_000_000
+RECORD_VERSION = "gomoku-record-1.0"
 
 
 @dataclass(frozen=True)
@@ -450,20 +453,34 @@ class StudentProgram:
         if len(stdout) >= MAX_OUTPUT_CHARS or len(stderr) >= MAX_OUTPUT_CHARS:
             return False, "程序输出超过 1 MiB 限制。", None
 
-        nonempty_lines = [line for line in stdout.splitlines() if line.strip()]
-        if len(nonempty_lines) != 1:
+        response_candidates: list[tuple[str, dict[str, Any]]] = []
+        debug_lines: list[str] = []
+        for line in (line for line in stdout.splitlines() if line.strip()):
+            try:
+                value = json.loads(line)
+            except json.JSONDecodeError:
+                debug_lines.append(line)
+                continue
+            if isinstance(value, dict) and "move" in value:
+                response_candidates.append((line, value))
+            else:
+                debug_lines.append(line)
+
+        if len(response_candidates) != 1:
+            debug_text = "\n".join(debug_lines).strip()
+            if not response_candidates:
+                reason = "stdout 中没有找到带 move 字段的一行 JSON Response。"
+            else:
+                reason = "stdout 中找到多行带 move 字段的 JSON Response。"
             return False, (
-                "stdout 必须只包含一行 JSON Response。\n"
+                f"{reason}\n"
+                "允许额外调试输出，但 Response 必须恰好一行。\n"
                 f"实际 stdout:\n{stdout.strip()}\n"
-                f"stderr:\n{stderr_text}"
+                f"stderr:\n{stderr_text}\n"
+                f"调试 stdout:\n{debug_text}"
             ), None
 
-        try:
-            response = json.loads(nonempty_lines[0])
-        except json.JSONDecodeError as error:
-            return False, f"stdout 不是合法 JSON：{error}\n原文：{nonempty_lines[0]}", None
-        if not isinstance(response, dict):
-            return False, "Response 必须是 JSON 对象。", None
+        response_line, response = response_candidates[0]
 
         expected_case_id = request["case_id"]
         if require_case_id and response.get("case_id") != expected_case_id:
@@ -479,7 +496,10 @@ class StudentProgram:
         ):
             return False, "move 必须是两个 0-based 整数 [row,col]。", None
 
-        log = f"stdout: {nonempty_lines[0]}"
+        log = f"stdout Response: {response_line}"
+        if debug_lines:
+            debug_text = "\n".join(debug_lines)
+            log += f"\nstdout 调试输出:\n{debug_text}"
         if stderr_text:
             log += f"\nstderr:\n{stderr_text}"
         return True, log, response
@@ -522,6 +542,21 @@ class SeriesScore:
     points: float = 0.0
 
 
+@dataclass
+class ReplaySession:
+    """从导出的记录验证后生成的只读回放会话。"""
+
+    source_path: Path
+    game_id: str
+    mode: str
+    board_size: int
+    ruleset: str
+    players: dict[str, dict[str, str]]
+    moves: list[Move]
+    result: dict[str, Any]
+    cursor: int = 0
+
+
 class GomokuApp:
     def __init__(self, root: Tk) -> None:
         self.root = root
@@ -552,6 +587,8 @@ class GomokuApp:
         self.series_scores: dict[str, SeriesScore] = {}
         self.series_names: dict[str, str] = {}
         self.series_first_players: list[str] = []
+        self.replay: ReplaySession | None = None
+        self.replay_autoplay = False
 
         self.board_cell = 40.0
         self.board_origin = (42.0, 42.0)
@@ -636,6 +673,21 @@ class GomokuApp:
         self.swap_button = ttk.Button(controls, text="交换黑白程序", command=self._swap_players)
         self.swap_button.pack(side="left")
         ttk.Button(controls, text="复制当前 Request", command=self._copy_request).pack(side="right")
+
+        replay_controls = ttk.Frame(board_area, padding=(0, 6, 0, 0))
+        replay_controls.grid(row=2, column=0, sticky="ew")
+        self.export_button = ttk.Button(replay_controls, text="导出当前对局", command=self._export_game)
+        self.export_button.pack(side="left")
+        self.open_replay_button = ttk.Button(replay_controls, text="打开对局回放", command=self._open_replay)
+        self.open_replay_button.pack(side="left", padx=(6, 0))
+        self.replay_prev_button = ttk.Button(replay_controls, text="回放上一步", command=self._replay_previous)
+        self.replay_prev_button.pack(side="left", padx=(16, 0))
+        self.replay_next_button = ttk.Button(replay_controls, text="回放下一步", command=self._replay_next)
+        self.replay_next_button.pack(side="left", padx=(6, 0))
+        self.replay_auto_button = ttk.Button(replay_controls, text="自动回放", command=self._toggle_replay_autoplay)
+        self.replay_auto_button.pack(side="left", padx=(6, 0))
+        self.exit_replay_button = ttk.Button(replay_controls, text="退出回放", command=self._exit_replay)
+        self.exit_replay_button.pack(side="left", padx=(6, 0))
 
         side = ttk.Frame(outer, width=430)
         side.grid(row=1, column=1, sticky="ns", padx=(14, 0), pady=(12, 0))
@@ -885,7 +937,14 @@ class GomokuApp:
         return f"{progress}；" + "；".join(entries)
 
     def _refresh(self) -> None:
-        if self._finished():
+        if self.replay is not None:
+            if self.replay.cursor == len(self.replay.moves) and self._finished():
+                self.turn_var.set(f"回放结束：{self._result_text()}")
+            else:
+                self.turn_var.set(
+                    f"文件回放：第 {self.replay.cursor}/{len(self.replay.moves)} 手"
+                )
+        elif self._finished():
             self.turn_var.set(self._result_text())
         elif not self.match_active:
             self.turn_var.set("尚未开始；配置后点击“开始 / 重新开始”。")
@@ -907,6 +966,10 @@ class GomokuApp:
             f"对局 {self.game_id}；"
             f"已落 {len(self.state.history)} 手；上一手：{last}"
         )
+        if self.replay is not None:
+            self.position_var.set(
+                f"回放文件 {self.replay.source_path.name}；" + self.position_var.get()
+            )
         last_column = chr(ord("A") + self.state.board_size - 1)
         self.coordinate_help_var.set(
             f"坐标为 0-based [row,col]；棋盘标注为 A–{last_column} 与 1–{self.state.board_size}。"
@@ -923,6 +986,15 @@ class GomokuApp:
     def _refresh_player_cards(self) -> None:
         for color in (BLACK, WHITE):
             slot = self.players[color]
+            if self.replay is not None:
+                record_player = self.replay.players["black" if color == BLACK else "white"]
+                kind = "C++ 程序" if record_player["kind"] == PROGRAM else "人类玩家"
+                self.player_role_vars[color].set(
+                    f"回放 · 选手 {record_player['id']} · {kind}"
+                )
+                self.player_source_vars[color].set(record_player["source"])
+                self.player_build_vars[color].set("回放文件")
+                continue
             if slot.kind == HUMAN:
                 self.player_role_vars[color].set(
                     f"选手 {slot.player_id} · 人类玩家（点击棋盘落子）"
@@ -941,7 +1013,7 @@ class GomokuApp:
 
     def _refresh_controls(self) -> None:
         match_configuration_enabled = (
-            not self.busy and not self.match_active and not self.series_active
+            not self.busy and not self.match_active and not self.series_active and self.replay is None
         )
         for widget in self.mode_widgets:
             widget.configure(state="normal" if match_configuration_enabled else "disabled")
@@ -973,7 +1045,7 @@ class GomokuApp:
             self.player_compile_buttons[color].configure(state="normal" if can_compile else "disabled")
 
         self.start_button.configure(
-            state="normal" if not self.busy and not self.series_active else "disabled"
+            state="normal" if not self.busy and not self.series_active and self.replay is None else "disabled"
         )
         self.stop_series_button.configure(
             state="normal" if self.series_active and not self.busy else "disabled"
@@ -986,11 +1058,33 @@ class GomokuApp:
         undo_enabled = (
             not self.busy
             and not self.series_active
+            and self.replay is None
             and bool(self.state.history)
             and (not self.match_active or self.paused or self._finished())
         )
         self.undo_button.configure(state="normal" if undo_enabled else "disabled")
         self.swap_button.configure(state="normal" if match_configuration_enabled else "disabled")
+        can_export = not self.busy and self.replay is None and (
+            bool(self.state.history) or bool(self.result_detail) or self.state.winner != EMPTY
+        )
+        self.export_button.configure(state="normal" if can_export else "disabled")
+        self.open_replay_button.configure(
+            state="normal"
+            if not self.busy and not self.match_active and not self.series_active
+            else "disabled"
+        )
+        replay_active = self.replay is not None
+        self.replay_prev_button.configure(
+            state="normal" if replay_active and self.replay.cursor > 0 else "disabled"
+        )
+        self.replay_next_button.configure(
+            state="normal"
+            if replay_active and self.replay.cursor < len(self.replay.moves)
+            else "disabled"
+        )
+        self.replay_auto_button.configure(state="normal" if replay_active else "disabled")
+        self.replay_auto_button.configure(text="停止自动回放" if self.replay_autoplay else "自动回放")
+        self.exit_replay_button.configure(state="normal" if replay_active else "disabled")
 
     def _draw_board(self) -> None:
         canvas = self.board_canvas
@@ -1048,6 +1142,9 @@ class GomokuApp:
             canvas.create_oval(x - marker, y - marker, x + marker, y + marker, fill="#e34b2d", outline="")
 
     def _on_board_click(self, event: tk.Event[tk.Misc]) -> None:
+        if self.replay is not None:
+            self._set_status("文件回放为只读；请使用“回放上一步 / 下一步”控制进度。", error=True)
+            return
         if self.busy:
             self._set_status("正在等待 C++ 程序返回，本回合棋盘已锁定。", error=True)
             return
@@ -1093,7 +1190,7 @@ class GomokuApp:
         self._after_move(auto_continue=True)
 
     def _start_match(self) -> None:
-        if self.busy or self.series_active:
+        if self.busy or self.series_active or self.replay is not None:
             return
         if self._time_limit(show_error=True) is None:
             return
@@ -1251,7 +1348,7 @@ class GomokuApp:
         self._request_program_move(color, auto_continue=False)
 
     def _undo(self) -> None:
-        if self.busy or self.series_active:
+        if self.busy or self.series_active or self.replay is not None:
             return
         if self.match_active and not self.paused and not self._finished():
             self._set_status("请先暂停对局，再悔棋。", error=True)
@@ -1478,6 +1575,305 @@ class GomokuApp:
 
         self._refresh()
         self.root.after(AUTO_STEP_DELAY_MS, self._advance_turn)
+
+    def _record_payload(self) -> dict[str, Any]:
+        """把当前可信局面导出为可由裁判重新校验的逐手记录。"""
+        if self.forfeit_color is not None:
+            result = {
+                "status": "forfeit",
+                "winner": WHITE if self.forfeit_color == BLACK else BLACK,
+                "forfeit_color": self.forfeit_color,
+                "detail": self.result_detail,
+            }
+        elif self.state.winner != EMPTY:
+            result = {
+                "status": "win",
+                "winner": self.state.winner,
+                "forfeit_color": None,
+                "detail": "",
+            }
+        elif self.state.is_draw():
+            result = {"status": "draw", "winner": EMPTY, "forfeit_color": None, "detail": ""}
+        else:
+            result = {
+                "status": "ongoing",
+                "winner": EMPTY,
+                "forfeit_color": None,
+                "detail": "",
+            }
+        return {
+            "record_version": RECORD_VERSION,
+            "created_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+            "game": {
+                "game_id": self.game_id,
+                "mode": self.mode_var.get(),
+                "board_size": self.state.board_size,
+                "ruleset": self.state.ruleset,
+                "players": {
+                    "black": {
+                        "id": self.players[BLACK].player_id,
+                        "kind": self.players[BLACK].kind,
+                        "source": self.players[BLACK].program.label,
+                    },
+                    "white": {
+                        "id": self.players[WHITE].player_id,
+                        "kind": self.players[WHITE].kind,
+                        "source": self.players[WHITE].program.label,
+                    },
+                },
+                "moves": [
+                    {"row": move.row, "col": move.col, "color": move.color}
+                    for move in self.state.history
+                ],
+                "result": result,
+            },
+        }
+
+    def _export_game(self) -> None:
+        if self.busy or self.replay is not None:
+            return
+        if not (self.state.history or self.result_detail or self.state.winner != EMPTY):
+            self._set_status("当前没有可导出的对局记录。", error=True)
+            return
+        filename = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="导出五子棋对局",
+            defaultextension=".json",
+            initialfile=f"gomoku-{self.game_id}.json",
+            filetypes=[("Gomoku record", "*.json"), ("All files", "*.*")],
+        )
+        if not filename:
+            return
+        path = Path(filename)
+        try:
+            path.write_text(
+                json.dumps(self._record_payload(), ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as error:
+            self._set_status(f"无法导出对局：{error}", error=True)
+            return
+        self._append_log(f"[裁判] 已导出当前对局：{path}\n")
+        self._set_status(f"当前对局已导出到：{path.name}")
+
+    @staticmethod
+    def _record_int(value: Any, field_name: str) -> int:
+        if not isinstance(value, int) or isinstance(value, bool):
+            raise ValueError(f"{field_name} 必须是整数。")
+        return value
+
+    def _parse_replay_record(self, payload: Any, source_path: Path) -> ReplaySession:
+        if not isinstance(payload, dict) or payload.get("record_version") != RECORD_VERSION:
+            raise ValueError(f"只支持 {RECORD_VERSION} 对局文件。")
+        game = payload.get("game")
+        if not isinstance(game, dict):
+            raise ValueError("对局文件缺少 game 对象。")
+        game_id = game.get("game_id")
+        mode = game.get("mode")
+        if not isinstance(game_id, str) or not game_id:
+            raise ValueError("game.game_id 必须是非空字符串。")
+        if not isinstance(mode, str):
+            raise ValueError("game.mode 必须是字符串。")
+        board_size = self._record_int(game.get("board_size"), "game.board_size")
+        if board_size not in BOARD_SIZE_CHOICES:
+            options = "、".join(str(size) for size in BOARD_SIZE_CHOICES)
+            raise ValueError(f"暂只支持 {options} 路棋盘的回放。")
+        ruleset = game.get("ruleset")
+        if ruleset not in RULESET_LABELS:
+            raise ValueError("对局文件含有未知规则预设。")
+
+        raw_players = game.get("players")
+        if not isinstance(raw_players, dict):
+            raise ValueError("对局文件缺少 players 对象。")
+        players: dict[str, dict[str, str]] = {}
+        for name in ("black", "white"):
+            player = raw_players.get(name)
+            if not isinstance(player, dict):
+                raise ValueError(f"players.{name} 必须是对象。")
+            player_id = player.get("id")
+            kind = player.get("kind")
+            source = player.get("source")
+            if not all(isinstance(value, str) for value in (player_id, kind, source)):
+                raise ValueError(f"players.{name} 的 id、kind、source 必须是字符串。")
+            players[name] = {"id": player_id, "kind": kind, "source": source}
+
+        raw_moves = game.get("moves")
+        if not isinstance(raw_moves, list):
+            raise ValueError("game.moves 必须是数组。")
+        verified = GomokuState(board_size=board_size, ruleset=ruleset)
+        moves: list[Move] = []
+        for index, raw_move in enumerate(raw_moves, start=1):
+            if not isinstance(raw_move, dict):
+                raise ValueError(f"第 {index} 手不是对象。")
+            row = self._record_int(raw_move.get("row"), f"第 {index} 手 row")
+            col = self._record_int(raw_move.get("col"), f"第 {index} 手 col")
+            color = self._record_int(raw_move.get("color"), f"第 {index} 手 color")
+            if color != verified.side_to_move:
+                raise ValueError(f"第 {index} 手棋色与轮次不符。")
+            verdict = verified.analyze_move(row, col)
+            if not verdict.legal:
+                raise ValueError(f"第 {index} 手无法由裁判重放：{verdict.reason}")
+            moves.append(verified.play(row, col))
+
+        result = game.get("result")
+        if not isinstance(result, dict):
+            raise ValueError("对局文件缺少 result 对象。")
+        status = result.get("status")
+        winner = self._record_int(result.get("winner"), "result.winner")
+        forfeit_color = result.get("forfeit_color")
+        detail = result.get("detail")
+        if not isinstance(detail, str):
+            raise ValueError("result.detail 必须是字符串。")
+        if status == "ongoing":
+            if winner != EMPTY or forfeit_color is not None or verified.winner or verified.is_draw():
+                raise ValueError("未结束对局的 result 与棋谱不一致。")
+        elif status == "win":
+            if forfeit_color is not None or winner != verified.winner or winner == EMPTY:
+                raise ValueError("胜局 result 与棋谱不一致。")
+        elif status == "draw":
+            if forfeit_color is not None or winner != EMPTY or not verified.is_draw():
+                raise ValueError("和棋 result 与棋谱不一致。")
+        elif status == "forfeit":
+            forfeit_color = self._record_int(forfeit_color, "result.forfeit_color")
+            if (
+                forfeit_color not in (BLACK, WHITE)
+                or winner != (WHITE if forfeit_color == BLACK else BLACK)
+                or verified.winner != EMPTY
+                or verified.is_draw()
+            ):
+                raise ValueError("判负 result 与棋谱不一致。")
+        else:
+            raise ValueError("result.status 必须是 ongoing、win、draw 或 forfeit。")
+        return ReplaySession(
+            source_path=source_path,
+            game_id=game_id,
+            mode=mode,
+            board_size=board_size,
+            ruleset=ruleset,
+            players=players,
+            moves=moves,
+            result={
+                "status": status,
+                "winner": winner,
+                "forfeit_color": forfeit_color,
+                "detail": detail,
+            },
+        )
+
+    def _open_replay(self) -> None:
+        if self.busy or self.match_active or self.series_active:
+            return
+        filename = filedialog.askopenfilename(
+            parent=self.root,
+            title="打开五子棋对局记录",
+            filetypes=[("Gomoku record", "*.json"), ("All files", "*.*")],
+        )
+        if not filename:
+            return
+        path = Path(filename)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            replay = self._parse_replay_record(payload, path)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+            self._set_status(f"无法打开回放：{error}", error=True)
+            return
+        self._start_replay(replay)
+
+    def _start_replay(self, replay: ReplaySession) -> None:
+        self._clear_series()
+        self.replay = replay
+        self.replay_autoplay = False
+        self.match_active = False
+        self.paused = False
+        self.ruleset_var.set(replay.ruleset)
+        self.board_size_var.set(str(replay.board_size))
+        self.game_id = replay.game_id
+        self._set_replay_cursor(0)
+        self._append_log(f"\n[回放] 已载入 {replay.source_path}\n")
+        self._set_status(f"已载入对局回放：{replay.source_path.name}；可逐手或自动播放。")
+        self._refresh()
+
+    def _set_replay_cursor(self, cursor: int) -> None:
+        if self.replay is None:
+            return
+        cursor = max(0, min(cursor, len(self.replay.moves)))
+        self.state = GomokuState(
+            board_size=self.replay.board_size,
+            ruleset=self.replay.ruleset,
+        )
+        for move in self.replay.moves[:cursor]:
+            self.state.play(move.row, move.col)
+        self.replay.cursor = cursor
+        self.forfeit_color = None
+        self.result_detail = ""
+        if cursor == len(self.replay.moves) and self.replay.result["status"] == "forfeit":
+            self.forfeit_color = self.replay.result["forfeit_color"]
+            self.result_detail = self.replay.result["detail"]
+        self.revision += 1
+
+    def _replay_previous(self) -> None:
+        if self.replay is None:
+            return
+        self.replay_autoplay = False
+        self._set_replay_cursor(self.replay.cursor - 1)
+        self._set_status(f"回放进度：第 {self.replay.cursor}/{len(self.replay.moves)} 手。")
+        self._refresh()
+
+    def _replay_next(self) -> None:
+        if self.replay is None or self.replay.cursor >= len(self.replay.moves):
+            return
+        self.replay_autoplay = False
+        self._set_replay_cursor(self.replay.cursor + 1)
+        self._announce_replay_position()
+        self._refresh()
+
+    def _toggle_replay_autoplay(self) -> None:
+        if self.replay is None:
+            return
+        self.replay_autoplay = not self.replay_autoplay
+        if self.replay_autoplay:
+            self._advance_replay()
+        self._refresh()
+
+    def _advance_replay(self) -> None:
+        if self.replay is None or not self.replay_autoplay:
+            return
+        if self.replay.cursor >= len(self.replay.moves):
+            self.replay_autoplay = False
+            self._announce_replay_position()
+            self._refresh()
+            return
+        self._set_replay_cursor(self.replay.cursor + 1)
+        self._refresh()
+        self.root.after(REPLAY_STEP_DELAY_MS, self._advance_replay)
+
+    def _announce_replay_position(self) -> None:
+        if self.replay is None:
+            return
+        if self.replay.cursor < len(self.replay.moves):
+            self._set_status(f"回放进度：第 {self.replay.cursor}/{len(self.replay.moves)} 手。")
+        elif self._finished():
+            self._set_status(f"回放结束：{self._result_text()}")
+        else:
+            self._set_status("回放结束：该文件导出时对局尚未结束。")
+
+    def _exit_replay(self) -> None:
+        if self.replay is None:
+            return
+        self.replay_autoplay = False
+        self.replay = None
+        self.state = GomokuState(
+            board_size=int(self.board_size_var.get()),
+            ruleset=self.ruleset_var.get(),
+        )
+        self.game_id = self._new_game_id()
+        self.forfeit_color = None
+        self.result_detail = ""
+        self.match_active = False
+        self.paused = False
+        self.revision += 1
+        self._set_status("已退出回放；当前为空棋盘，可配置后开始新对局。")
+        self._refresh()
 
     def _copy_request(self) -> None:
         request = self._current_request(show_error=True)
