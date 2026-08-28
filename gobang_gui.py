@@ -30,6 +30,14 @@ WHITE = 2
 BOARD_SIZE = 15
 WIN_LENGTH = 5
 STONE_NAME = {BLACK: "黑", WHITE: "白"}
+DIRECTIONS = ((1, 0), (0, 1), (1, 1), (1, -1))
+
+RULE_FREESTYLE = "freestyle"
+RULE_RENJU_CLASSROOM = "renju_classroom"
+RULESET_LABELS = {
+    RULE_RENJU_CLASSROOM: "连珠禁手（课堂；黑首天元）",
+    RULE_FREESTYLE: "自由五子棋（无禁手）",
+}
 
 MODE_HUMAN_AI = "human_ai"
 MODE_AI_AI = "ai_ai"
@@ -48,6 +56,16 @@ class Move:
     color: int
 
 
+@dataclass(frozen=True)
+class MoveVerdict:
+    """裁判对候选落子的唯一判定结果。"""
+
+    legal: bool
+    reason: str = ""
+    winner: int = EMPTY
+    forbidden: str | None = None
+
+
 @dataclass
 class GomokuState:
     """界面唯一持有的可信棋局状态。外部程序只可提交候选落子。"""
@@ -59,6 +77,7 @@ class GomokuState:
     last_move: Move | None = None
     history: list[Move] = field(default_factory=list)
     winner: int = EMPTY
+    ruleset: str = RULE_RENJU_CLASSROOM
 
     def reset(self) -> None:
         self.board = [[EMPTY] * BOARD_SIZE for _ in range(BOARD_SIZE)]
@@ -71,17 +90,78 @@ class GomokuState:
         return 0 <= row < BOARD_SIZE and 0 <= col < BOARD_SIZE
 
     def is_legal(self, row: int, col: int) -> bool:
-        return self.winner == EMPTY and self.in_bounds(row, col) and self.board[row][col] == EMPTY
+        return self.analyze_move(row, col).legal
+
+    def legality_reason(self, row: int, col: int) -> str | None:
+        verdict = self.analyze_move(row, col)
+        return None if verdict.legal else verdict.reason
+
+    def analyze_move(self, row: int, col: int) -> MoveVerdict:
+        """不修改局面地判定一手棋；课堂连珠的禁手由此统一执行。"""
+        if self.winner != EMPTY or self.is_draw():
+            return MoveVerdict(False, "对局已结束。")
+        if not self.in_bounds(row, col):
+            return MoveVerdict(False, "落子越界。")
+        if self.board[row][col] != EMPTY:
+            return MoveVerdict(False, "该位置已有棋子。")
+
+        color = self.side_to_move
+        if (
+            self.ruleset == RULE_RENJU_CLASSROOM
+            and color == BLACK
+            and not self.history
+            and (row, col) != (BOARD_SIZE // 2, BOARD_SIZE // 2)
+        ):
+            return MoveVerdict(
+                False,
+                "课堂连珠开局要求黑方首手落在天元 H8（[7,7]）。",
+                forbidden="opening",
+            )
+
+        self.board[row][col] = color
+        try:
+            if self.ruleset == RULE_FREESTYLE:
+                winner = color if self._has_at_least_five(row, col, color) else EMPTY
+                return MoveVerdict(True, winner=winner)
+
+            if color == WHITE:
+                winner = WHITE if self._has_at_least_five(row, col, WHITE) else EMPTY
+                return MoveVerdict(True, winner=winner)
+
+            # 中国五子棋竞赛规则中的优先级：黑方本手恰好五连时，五连优先于禁手。
+            if self._has_exact_five(row, col, BLACK):
+                return MoveVerdict(True, winner=BLACK)
+            if self._has_overline(row, col, BLACK):
+                return MoveVerdict(
+                    False,
+                    "黑方长连（六子及以上）为禁手，白方获胜。",
+                    forbidden="overline",
+                )
+            if len(self._four_patterns_through(row, col)) >= 2:
+                return MoveVerdict(
+                    False,
+                    "黑方四四（同时形成两个及以上的四）为禁手，白方获胜。",
+                    forbidden="double_four",
+                )
+            if len(self._open_three_patterns_through(row, col)) >= 2:
+                return MoveVerdict(
+                    False,
+                    "黑方三三（同时形成两个及以上的活三）为禁手，白方获胜。",
+                    forbidden="double_three",
+                )
+            return MoveVerdict(True)
+        finally:
+            self.board[row][col] = EMPTY
 
     def play(self, row: int, col: int) -> Move:
-        if not self.is_legal(row, col):
-            raise ValueError("落子越界、位置已有棋子，或对局已结束")
+        verdict = self.analyze_move(row, col)
+        if not verdict.legal:
+            raise ValueError(verdict.reason)
         move = Move(row, col, self.side_to_move)
         self.board[row][col] = move.color
         self.history.append(move)
         self.last_move = move
-        if self._has_five(row, col, move.color):
-            self.winner = move.color
+        self.winner = verdict.winner
         self.side_to_move = WHITE if move.color == BLACK else BLACK
         return move
 
@@ -115,24 +195,127 @@ class GomokuState:
             ),
             "last_move_color": self.last_move.color if self.last_move is not None else None,
             "rules": {
+                "id": self.ruleset,
                 "win_length": WIN_LENGTH,
-                "forbidden_moves": "none",
+                "black_win": "five_or_more" if self.ruleset == RULE_FREESTYLE else "exactly_five",
+                "white_win": "five_or_more",
+                "forbidden_moves": (
+                    "none"
+                    if self.ruleset == RULE_FREESTYLE
+                    else "black_overline_double_four_double_three"
+                ),
+                "opening": (
+                    "free"
+                    if self.ruleset == RULE_FREESTYLE
+                    else "black_center_H8"
+                ),
+                "adjudication": "automatic",
                 "time_limit_ms": time_limit_ms,
             },
         }
 
-    def _has_five(self, row: int, col: int, color: int) -> bool:
-        for dr, dc in ((1, 0), (0, 1), (1, 1), (1, -1)):
-            count = 1
-            for sign in (-1, 1):
-                r, c = row + sign * dr, col + sign * dc
-                while self.in_bounds(r, c) and self.board[r][c] == color:
-                    count += 1
-                    r += sign * dr
-                    c += sign * dc
-            if count >= WIN_LENGTH:
-                return True
-        return False
+    def set_ruleset(self, ruleset: str) -> None:
+        if ruleset not in RULESET_LABELS:
+            raise ValueError(f"未知规则预设：{ruleset}")
+        self.ruleset = ruleset
+
+    def _line_length(self, row: int, col: int, color: int, dr: int, dc: int) -> int:
+        count = 1
+        for sign in (-1, 1):
+            r, c = row + sign * dr, col + sign * dc
+            while self.in_bounds(r, c) and self.board[r][c] == color:
+                count += 1
+                r += sign * dr
+                c += sign * dc
+        return count
+
+    def _has_at_least_five(self, row: int, col: int, color: int) -> bool:
+        return any(
+            self._line_length(row, col, color, dr, dc) >= WIN_LENGTH
+            for dr, dc in DIRECTIONS
+        )
+
+    def _has_exact_five(self, row: int, col: int, color: int) -> bool:
+        return any(
+            self._line_length(row, col, color, dr, dc) == WIN_LENGTH
+            for dr, dc in DIRECTIONS
+        )
+
+    def _has_overline(self, row: int, col: int, color: int) -> bool:
+        return any(
+            self._line_length(row, col, color, dr, dc) > WIN_LENGTH
+            for dr, dc in DIRECTIONS
+        )
+
+    def _four_patterns_through(self, row: int, col: int) -> set[tuple[int, frozenset[tuple[int, int]]]]:
+        """枚举含新落子的“四”；活四的两个补点只算同一个四。"""
+        patterns: set[tuple[int, frozenset[tuple[int, int]]]] = set()
+        for direction, (dr, dc) in enumerate(DIRECTIONS):
+            for start in range(-4, 1):
+                cells = [(row + (start + index) * dr, col + (start + index) * dc) for index in range(5)]
+                if not all(self.in_bounds(r, c) for r, c in cells):
+                    continue
+                values = [self.board[r][c] for r, c in cells]
+                if values.count(BLACK) != 4 or values.count(EMPTY) != 1:
+                    continue
+                empty_row, empty_col = cells[values.index(EMPTY)]
+                self.board[empty_row][empty_col] = BLACK
+                try:
+                    completes_exact_five = (
+                        self._line_length(empty_row, empty_col, BLACK, dr, dc) == WIN_LENGTH
+                    )
+                finally:
+                    self.board[empty_row][empty_col] = EMPTY
+                if completes_exact_five:
+                    black_cells = frozenset(
+                        (cell_row, cell_col)
+                        for (cell_row, cell_col), value in zip(cells, values)
+                        if value == BLACK
+                    )
+                    patterns.add((direction, black_cells))
+        return patterns
+
+    def _open_three_patterns_through(
+        self, row: int, col: int
+    ) -> set[tuple[int, frozenset[tuple[int, int]]]]:
+        """枚举含新落子的活三：补一子后可形成两端均空的连续活四。"""
+        patterns: set[tuple[int, frozenset[tuple[int, int]]]] = set()
+        for direction, (dr, dc) in enumerate(DIRECTIONS):
+            for extension in range(-3, 4):
+                if extension == 0:
+                    continue
+                extend_row, extend_col = row + extension * dr, col + extension * dc
+                if not self.in_bounds(extend_row, extend_col):
+                    continue
+                if self.board[extend_row][extend_col] != EMPTY:
+                    continue
+                self.board[extend_row][extend_col] = BLACK
+                try:
+                    for start in range(-3, 1):
+                        cells = [
+                            (row + (start + index) * dr, col + (start + index) * dc)
+                            for index in range(4)
+                        ]
+                        if (row, col) not in cells or (extend_row, extend_col) not in cells:
+                            continue
+                        if not all(self.in_bounds(cell_row, cell_col) for cell_row, cell_col in cells):
+                            continue
+                        if not all(self.board[cell_row][cell_col] == BLACK for cell_row, cell_col in cells):
+                            continue
+                        before = (cells[0][0] - dr, cells[0][1] - dc)
+                        after = (cells[-1][0] + dr, cells[-1][1] + dc)
+                        if not (
+                            self.in_bounds(*before)
+                            and self.in_bounds(*after)
+                            and self.board[before[0]][before[1]] == EMPTY
+                            and self.board[after[0]][after[1]] == EMPTY
+                        ):
+                            continue
+                        three_cells = frozenset(cell for cell in cells if cell != (extend_row, extend_col))
+                        patterns.add((direction, three_cells))
+                finally:
+                    self.board[extend_row][extend_col] = EMPTY
+        return patterns
 
 
 class StudentProgram:
@@ -307,7 +490,8 @@ class GomokuApp:
         self.root.minsize(1120, 740)
         self.root.geometry("1360x860")
 
-        self.state = GomokuState()
+        self.ruleset_var = StringVar(value=RULE_RENJU_CLASSROOM)
+        self.state = GomokuState(ruleset=self.ruleset_var.get())
         self.players = {BLACK: PlayerSlot(), WHITE: PlayerSlot()}
         self.jobs: queue.Queue[tuple[Any, ...]] = queue.Queue()
         self.busy = False
@@ -334,6 +518,7 @@ class GomokuApp:
         self.player_compile_buttons: dict[int, ttk.Button] = {}
         self.mode_widgets: list[ttk.Widget] = []
         self.human_color_widgets: list[ttk.Widget] = []
+        self.rule_widgets: list[ttk.Widget] = []
 
         self._build_ui()
         self._apply_mode()
@@ -429,6 +614,18 @@ class GomokuApp:
         limits.pack(fill="x", pady=(6, 0))
         ttk.Label(limits, text="每手限时 (ms)：").pack(side="left")
         ttk.Entry(limits, textvariable=self.time_limit_var, width=8).pack(side="left")
+
+        ttk.Label(mode_box, text="裁判规则：").pack(anchor="w", pady=(8, 0))
+        for value in (RULE_RENJU_CLASSROOM, RULE_FREESTYLE):
+            widget = ttk.Radiobutton(
+                mode_box,
+                text=RULESET_LABELS[value],
+                value=value,
+                variable=self.ruleset_var,
+                command=self._on_ruleset_changed,
+            )
+            widget.pack(anchor="w")
+            self.rule_widgets.append(widget)
 
         self._build_player_card(side, BLACK)
         self._build_player_card(side, WHITE)
@@ -527,6 +724,13 @@ class GomokuApp:
         self._set_status("玩家执子已切换；点击“开始 / 重新开始”会建立新对局。")
         self._refresh()
 
+    def _on_ruleset_changed(self) -> None:
+        if self.busy or self.match_active:
+            return
+        self.state.set_ruleset(self.ruleset_var.get())
+        self._set_status(f"裁判规则已切换为：{RULESET_LABELS[self.state.ruleset]}。")
+        self._refresh()
+
     def _required_program_colors(self) -> list[int]:
         return [color for color in (BLACK, WHITE) if self.players[color].kind == PROGRAM]
 
@@ -564,7 +768,10 @@ class GomokuApp:
                 f"{STONE_NAME[self.state.last_move.color]} "
                 f"{self._coordinate(self.state.last_move.row, self.state.last_move.col)}"
             )
-        self.position_var.set(f"对局 {self.game_id}；已落 {len(self.state.history)} 手；上一手：{last}")
+        self.position_var.set(
+            f"{RULESET_LABELS[self.state.ruleset]}；对局 {self.game_id}；"
+            f"已落 {len(self.state.history)} 手；上一手：{last}"
+        )
 
         request = self._current_request()
         if request is not None:
@@ -591,6 +798,8 @@ class GomokuApp:
     def _refresh_controls(self) -> None:
         match_configuration_enabled = not self.busy and not self.match_active
         for widget in self.mode_widgets:
+            widget.configure(state="normal" if match_configuration_enabled else "disabled")
+        for widget in self.rule_widgets:
             widget.configure(state="normal" if match_configuration_enabled else "disabled")
         human_side_enabled = match_configuration_enabled and self.mode_var.get() == MODE_HUMAN_AI
         for widget in self.human_color_widgets:
@@ -694,11 +903,15 @@ class GomokuApp:
             or abs(event.y - y) > self.board_cell * 0.45
         ):
             return
-        try:
-            move = self.state.play(row, col)
-        except ValueError as error:
-            self._set_status(str(error), error=True)
+        verdict = self.state.analyze_move(row, col)
+        if not verdict.legal:
+            if verdict.forbidden is not None:
+                self._declare_forfeit(self.state.side_to_move, verdict.reason)
+                self._refresh()
+            else:
+                self._set_status(verdict.reason, error=True)
             return
+        move = self.state.play(row, col)
         self.revision += 1
         self._append_log(
             f"[{STONE_NAME[move.color]} / 人类 / 第 {len(self.state.history)} 手] "
@@ -726,7 +939,10 @@ class GomokuApp:
         self.paused = False
         self.forfeit_color = None
         self.result_detail = ""
-        self._append_log(f"\n[新对局 {self.game_id}] 模式：{self._mode_name()}\n")
+        self._append_log(
+            f"\n[新对局 {self.game_id}] 模式：{self._mode_name()}；"
+            f"规则：{RULESET_LABELS[self.state.ruleset]}\n"
+        )
         self._set_status("对局开始：黑方先行。")
         self._refresh()
         self._advance_turn()
@@ -882,8 +1098,14 @@ class GomokuApp:
                         continue
 
                     row, col = response["move"]
-                    if not self.state.is_legal(row, col):
-                        self._handle_program_failure(color, f"非法落子 [{row},{col}]")
+                    verdict = self.state.analyze_move(row, col)
+                    if not verdict.legal:
+                        if verdict.forbidden is not None:
+                            self._declare_forfeit(color, verdict.reason)
+                        else:
+                            self._handle_program_failure(
+                                color, f"非法落子 [{row},{col}]：{verdict.reason}"
+                            )
                         self._refresh()
                         continue
 
@@ -899,15 +1121,18 @@ class GomokuApp:
 
     def _handle_program_failure(self, color: int, reason: str) -> None:
         if self.mode_var.get() == MODE_AI_AI:
-            self.forfeit_color = color
-            self.result_detail = reason
-            self.match_active = False
-            self.paused = False
-            self._set_status(self._result_text(), error=True)
-            self._append_log(f"[裁判] {STONE_NAME[color]}方判负：{reason}\n")
+            self._declare_forfeit(color, reason)
         else:
             self.paused = True
             self._set_status(f"{STONE_NAME[color]}方程序出错：{reason}。已暂停，可修正后单步重试。", error=True)
+
+    def _declare_forfeit(self, color: int, reason: str) -> None:
+        self.forfeit_color = color
+        self.result_detail = reason
+        self.match_active = False
+        self.paused = False
+        self._set_status(self._result_text(), error=True)
+        self._append_log(f"[裁判] {STONE_NAME[color]}方判负：{reason}\n")
 
     def _after_move(self, *, auto_continue: bool) -> None:
         if self.state.winner or self.state.is_draw():
