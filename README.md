@@ -1,13 +1,12 @@
 # PySide6 三维魔方 Solver 可视化器
 
-这是给学生裸文本 solver 使用的三维展示工具。它不实现搜索、不编译学生代码、不读写回放文件；它只校验初态和 stdout 动作流，在一个 PySide6 `QOpenGLWidget` 中执行对应的 3D 动画。
+这是给学生裸文本 solver 使用的三维展示工具。它只校验初态和 stdout 动作流，并在三维视图中播放对应的动作。
 
 ## 安装与启动
 
 需要 Python 3.12。推荐使用 Conda；该方案只安装 Python 与 PySide6：
 
 ```bash
-cd /Users/hanyuhe/Desktop/design/cube/visualizer
 conda env create -f environment.yml
 conda activate cube-visualizer
 python app.py
@@ -22,7 +21,6 @@ conda env update -f environment.yml --prune
 也可以创建标准 `venv`：
 
 ```bash
-cd /Users/hanyuhe/Desktop/design/cube/visualizer
 python3.12 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python app.py
@@ -32,29 +30,9 @@ Windows 下将最后两条命令中的 `.venv/bin/python` 替换为 `.venv\\Scri
 
 ## 学生 solver 固定接口
 
-在界面中选择**已经编译好的可执行文件绝对路径**。可视化器用无 shell 的 `QProcess` 启动它，最长运行 5 分钟；stdout 和 stderr 各最多保留 1 MiB。
+在界面中选择导入**可执行程序**即可：macOS 选择 macOS 可执行文件，Windows 选择 `.exe` 文件。不要选择 `.cpp` 等源码文件；不同平台的可执行程序不能混用。
 
-不要选择 `ms-Astar.cpp` 这类源码文件；它不能直接运行。每个系统都必须使用在**该系统上编译**的程序：macOS 的 Mach-O 可执行文件与 Windows 的 `.exe` 不能互相运行。
-
-macOS 上可在终端编译，再在界面中选择生成的无后缀文件：
-
-```bash
-clang++ -std=c++17 -O2 /完整路径/ms-Astar.cpp -o /完整路径/ms-Astar
-```
-
-Windows 上可使用 Visual Studio 的 Developer PowerShell：
-
-```powershell
-cl /std:c++17 /O2 C:\完整路径\ms-Astar.cpp /Fe:C:\完整路径\ms-Astar.exe
-```
-
-也可使用 MinGW：
-
-```powershell
-g++ -std=c++17 -O2 C:\完整路径\ms-Astar.cpp -o C:\完整路径\ms-Astar.exe
-```
-
-工具不会替学生编译源码，避免把编译器参数、依赖和运行时错误混入 solver 协议检查；误选源码、跨平台程序或没有执行权限的文件时，界面会在启动前说明原因。
+工具会直接运行所选程序。运行时间最长 5 分钟，stdout 和 stderr 各最多保留 1 MiB；文件不可执行、格式不匹配或跨平台时，界面会在启动前提示原因。
 
 stdin 是编辑器里的原始 UTF-8 文本，格式严格为以下六个区块，顺序不可改变。每个格子都是一个非空白、可打印 ASCII 字符；一共恰好六种字符，每种九张。
 
