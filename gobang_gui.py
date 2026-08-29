@@ -51,6 +51,8 @@ PROGRAM = "program"
 AUTO_STEP_DELAY_MS = 180
 REPLAY_STEP_DELAY_MS = 450
 RESIZE_REDRAW_DELAY_MS = 16
+SIDEBAR_WIDTH = 430
+SIDEBAR_TEXT_WRAP = 390
 MAX_OUTPUT_CHARS = 1_000_000
 RECORD_VERSION = "gomoku-record-1.0"
 
@@ -595,6 +597,11 @@ class GomokuApp:
         self.board_origin = (42.0, 42.0)
         self._board_layout: tuple[int, int, int] | None = None
         self._board_resize_after_id: str | None = None
+        # Canvas 中已经绘制出的局面。局面刷新时用它做差量更新，避免每一手
+        # 都删除并重画整盘棋子，造成 macOS Tk 上明显的闪动。
+        self._rendered_board: list[list[int]] | None = None
+        self._rendered_last_move: tuple[int, int, int] | None = None
+        self._request_text_cache: str | None = None
 
         self.mode_var = StringVar(value=MODE_HUMAN_AI)
         self.human_color_var = StringVar(value="black")
@@ -619,6 +626,10 @@ class GomokuApp:
         self.match_setting_widgets: list[ttk.Widget] = []
         self.series_setting_widgets: list[ttk.Widget] = []
         self.board_size_selector: ttk.Combobox | None = None
+        self.board_area: ttk.Frame
+        self.sidebar: ttk.Frame
+        self.sidebar_notebook: ttk.Notebook
+        self.debug_notebook: ttk.Notebook
 
         self._build_ui()
         self._apply_mode()
@@ -662,6 +673,7 @@ class GomokuApp:
         )
 
         board_area = ttk.Frame(outer)
+        self.board_area = board_area
         board_area.grid(row=1, column=0, sticky="nsew", pady=(12, 0))
         board_area.columnconfigure(0, weight=1)
         board_area.rowconfigure(0, weight=1)
@@ -706,11 +718,23 @@ class GomokuApp:
         self.exit_replay_button = ttk.Button(replay_controls, text="退出回放", command=self._exit_replay)
         self.exit_replay_button.pack(side="left", padx=(6, 0))
 
-        side = ttk.Frame(outer, width=430)
+        side = ttk.Frame(outer, width=SIDEBAR_WIDTH)
+        self.sidebar = side
         side.grid(row=1, column=1, sticky="ns", padx=(14, 0), pady=(12, 0))
-        side.grid_propagate(False)
+        # 右栏的子控件全部由 pack 管理，因此必须关闭 pack 的尺寸传播。
+        # 使用 grid_propagate(False) 不会阻止动态 Label 改变右栏请求宽度，
+        # 右栏会随每手棋的文字变宽并挤压 Canvas，形成整个界面的横向抖动。
+        side.pack_propagate(False)
 
-        mode_box = ttk.LabelFrame(side, text="对战模式", padding=10)
+        sidebar_notebook = ttk.Notebook(side)
+        self.sidebar_notebook = sidebar_notebook
+        sidebar_notebook.pack(fill="both", expand=True)
+        setup_panel = ttk.Frame(sidebar_notebook, padding=(4, 6))
+        game_panel = ttk.Frame(sidebar_notebook, padding=(4, 6))
+        sidebar_notebook.add(setup_panel, text="对战设置")
+        sidebar_notebook.add(game_panel, text="棋局 / 调试")
+
+        mode_box = ttk.LabelFrame(setup_panel, text="对战模式", padding=10)
         mode_box.pack(fill="x")
         for value, text in (
             (MODE_HUMAN_AI, "玩家 vs C++ 程序"),
@@ -759,7 +783,7 @@ class GomokuApp:
         board_size_selector.bind("<<ComboboxSelected>>", self._on_board_size_changed)
         self.board_size_selector = board_size_selector
 
-        series_box = ttk.LabelFrame(side, text="C++ vs C++ 系列赛", padding=10)
+        series_box = ttk.LabelFrame(setup_panel, text="C++ vs C++ 系列赛", padding=10)
         series_box.pack(fill="x", pady=(10, 0))
         rounds_line = ttk.Frame(series_box)
         rounds_line.pack(fill="x")
@@ -780,7 +804,11 @@ class GomokuApp:
         ttk.Label(points_line, text="/").pack(side="left", padx=3)
         loss_entry = ttk.Entry(points_line, textvariable=self.loss_points_var, width=5)
         loss_entry.pack(side="left")
-        ttk.Label(series_box, textvariable=self.series_summary_var, wraplength=390).pack(
+        ttk.Label(
+            series_box,
+            textvariable=self.series_summary_var,
+            wraplength=SIDEBAR_TEXT_WRAP,
+        ).pack(
             anchor="w", pady=(7, 0)
         )
         self.series_setting_widgets.extend((rounds_entry, win_entry, draw_entry, loss_entry))
@@ -797,31 +825,53 @@ class GomokuApp:
             widget.pack(anchor="w")
             self.rule_widgets.append(widget)
 
-        self._build_player_card(side, BLACK)
-        self._build_player_card(side, WHITE)
+        self._build_player_card(setup_panel, BLACK)
+        self._build_player_card(setup_panel, WHITE)
 
-        state_box = ttk.LabelFrame(side, text="棋局", padding=10)
-        state_box.pack(fill="x", pady=(10, 0))
+        state_box = ttk.LabelFrame(game_panel, text="棋局", padding=10)
+        state_box.pack(fill="x")
         ttk.Label(state_box, textvariable=self.turn_var).pack(anchor="w")
-        ttk.Label(state_box, textvariable=self.position_var).pack(anchor="w", pady=(3, 0))
+        ttk.Label(
+            state_box,
+            textvariable=self.position_var,
+            wraplength=SIDEBAR_TEXT_WRAP,
+            justify="left",
+        ).pack(anchor="w", pady=(3, 0))
         ttk.Label(
             state_box,
             textvariable=self.coordinate_help_var,
             foreground="#555555",
-            wraplength=390,
+            wraplength=SIDEBAR_TEXT_WRAP,
         ).pack(anchor="w", pady=(7, 0))
 
-        request_box = ttk.LabelFrame(side, text="当前 Request（调试）", padding=6)
-        request_box.pack(fill="both", expand=True, pady=(10, 0))
+        # Request 与日志属于低频调试信息。二者纵向堆叠会在常见的 860px
+        # 窗口高度下互相挤到不可见；使用标签页共享剩余空间，两块内容都能
+        # 获得完整宽度和滚动能力，同时不再参与右栏宽度计算。
+        debug_notebook = ttk.Notebook(game_panel)
+        self.debug_notebook = debug_notebook
+        debug_notebook.pack(fill="both", expand=True, pady=(10, 0))
+
+        request_box = ttk.Frame(debug_notebook, padding=6)
+        debug_notebook.add(request_box, text="当前 Request")
         self.request_text = scrolledtext.ScrolledText(
-            request_box, height=10, wrap="word", font=("Menlo", 10), state="disabled"
+            request_box,
+            width=1,
+            height=6,
+            wrap="word",
+            font=("Menlo", 10),
+            state="disabled",
         )
         self.request_text.pack(fill="both", expand=True)
 
-        log_box = ttk.LabelFrame(side, text="对局 / 编译日志", padding=6)
-        log_box.pack(fill="both", expand=True, pady=(10, 0))
+        log_box = ttk.Frame(debug_notebook, padding=6)
+        debug_notebook.add(log_box, text="对局 / 编译日志")
         self.log_text = scrolledtext.ScrolledText(
-            log_box, height=10, wrap="word", font=("Menlo", 10), state="disabled"
+            log_box,
+            width=1,
+            height=6,
+            wrap="word",
+            font=("Menlo", 10),
+            state="disabled",
         )
         self.log_text.pack(fill="both", expand=True)
 
@@ -829,7 +879,11 @@ class GomokuApp:
         card = ttk.LabelFrame(parent, text=f"{STONE_NAME[color]}方选手", padding=10)
         card.pack(fill="x", pady=(10, 0))
         ttk.Label(card, textvariable=self.player_role_vars[color], style="Player.TLabel").pack(anchor="w")
-        ttk.Label(card, textvariable=self.player_source_vars[color], wraplength=390).pack(
+        ttk.Label(
+            card,
+            textvariable=self.player_source_vars[color],
+            wraplength=SIDEBAR_TEXT_WRAP,
+        ).pack(
             anchor="w", pady=(3, 0)
         )
         buttons = ttk.Frame(card)
@@ -956,21 +1010,20 @@ class GomokuApp:
     def _refresh(self) -> None:
         if self.replay is not None:
             if self.replay.cursor == len(self.replay.moves) and self._finished():
-                self.turn_var.set(f"回放结束：{self._result_text()}")
+                turn_text = f"回放结束：{self._result_text()}"
             else:
-                self.turn_var.set(
-                    f"文件回放：第 {self.replay.cursor}/{len(self.replay.moves)} 手"
-                )
+                turn_text = f"文件回放：第 {self.replay.cursor}/{len(self.replay.moves)} 手"
         elif self._finished():
-            self.turn_var.set(self._result_text())
+            turn_text = self._result_text()
         elif not self.match_active:
-            self.turn_var.set("尚未开始；配置后点击“开始 / 重新开始”。")
+            turn_text = "尚未开始；配置后点击“开始 / 重新开始”。"
         elif self.paused:
-            self.turn_var.set(f"已暂停：轮到 {STONE_NAME[self.state.side_to_move]}方")
+            turn_text = f"已暂停：轮到 {STONE_NAME[self.state.side_to_move]}方"
         else:
             kind = self.players[self.state.side_to_move].kind
             detail = "等待玩家点击棋盘" if kind == HUMAN else "正在由 C++ 程序计算"
-            self.turn_var.set(f"轮到 {STONE_NAME[self.state.side_to_move]}方：{detail}")
+            turn_text = f"轮到 {STONE_NAME[self.state.side_to_move]}方：{detail}"
+        self._set_var_if_changed(self.turn_var, turn_text)
 
         last = "无"
         if self.state.last_move:
@@ -978,24 +1031,29 @@ class GomokuApp:
                 f"{STONE_NAME[self.state.last_move.color]} "
                 f"{self._coordinate(self.state.last_move.row, self.state.last_move.col)}"
             )
-        self.position_var.set(
+        position_text = (
             f"{self.state.board_size}×{self.state.board_size}；{RULESET_LABELS[self.state.ruleset]}；"
             f"对局 {self.game_id}；"
             f"已落 {len(self.state.history)} 手；上一手：{last}"
         )
         if self.replay is not None:
-            self.position_var.set(
-                f"回放文件 {self.replay.source_path.name}；" + self.position_var.get()
-            )
+            position_text = f"回放文件 {self.replay.source_path.name}；{position_text}"
+        self._set_var_if_changed(self.position_var, position_text)
+
         last_column = chr(ord("A") + self.state.board_size - 1)
-        self.coordinate_help_var.set(
-            f"坐标为 0-based [row,col]；棋盘标注为 A–{last_column} 与 1–{self.state.board_size}。"
+        self._set_var_if_changed(
+            self.coordinate_help_var,
+            f"坐标为 0-based [row,col]；棋盘标注为 A–{last_column} 与 "
+            f"1–{self.state.board_size}。",
         )
-        self.series_summary_var.set(self._series_summary())
+        self._set_var_if_changed(self.series_summary_var, self._series_summary())
 
         request = self._current_request()
         if request is not None:
-            self._set_text(self.request_text, json.dumps(request, ensure_ascii=False, indent=2))
+            request_text = json.dumps(request, ensure_ascii=False, indent=2)
+            if request_text != self._request_text_cache:
+                self._set_text(self.request_text, request_text)
+                self._request_text_cache = request_text
         self._refresh_player_cards()
         self._refresh_controls()
         self._draw_board()
@@ -1006,27 +1064,30 @@ class GomokuApp:
             if self.replay is not None:
                 record_player = self.replay.players["black" if color == BLACK else "white"]
                 kind = "C++ 程序" if record_player["kind"] == PROGRAM else "人类玩家"
-                self.player_role_vars[color].set(
-                    f"回放 · 选手 {record_player['id']} · {kind}"
+                self._set_var_if_changed(
+                    self.player_role_vars[color],
+                    f"回放 · 选手 {record_player['id']} · {kind}",
                 )
-                self.player_source_vars[color].set(record_player["source"])
-                self.player_build_vars[color].set("回放文件")
+                self._set_var_if_changed(self.player_source_vars[color], record_player["source"])
+                self._set_var_if_changed(self.player_build_vars[color], "回放文件")
                 continue
             if slot.kind == HUMAN:
-                self.player_role_vars[color].set(
-                    f"选手 {slot.player_id} · 人类玩家（点击棋盘落子）"
-                )
+                role_text = f"选手 {slot.player_id} · 人类玩家（点击棋盘落子）"
             else:
-                self.player_role_vars[color].set(
-                    f"选手 {slot.player_id} · C++ 程序（每手启动一个新进程）"
-                )
+                role_text = f"选手 {slot.player_id} · C++ 程序（每手启动一个新进程）"
+            self._set_var_if_changed(self.player_role_vars[color], role_text)
 
             if slot.program.source_path is None:
-                self.player_source_vars[color].set("未选择 .cpp 文件")
-                self.player_build_vars[color].set("待选择")
+                self._set_var_if_changed(self.player_source_vars[color], "未选择 .cpp 文件")
+                self._set_var_if_changed(self.player_build_vars[color], "待选择")
             else:
-                self.player_source_vars[color].set(str(slot.program.source_path))
-                self.player_build_vars[color].set("已编译" if slot.program.is_ready else "待编译")
+                self._set_var_if_changed(
+                    self.player_source_vars[color], str(slot.program.source_path)
+                )
+                self._set_var_if_changed(
+                    self.player_build_vars[color],
+                    "已编译" if slot.program.is_ready else "待编译",
+                )
 
     def _refresh_controls(self) -> None:
         match_configuration_enabled = (
@@ -1182,15 +1243,30 @@ class GomokuApp:
                     tags="board",
                 )
             self._board_layout = layout
+            # 尺寸变了时，画布上的所有 item 都已被删除；下一段会按当前局面
+            # 重新放置棋子和上一手标记。
+            self._rendered_board = None
+            self._rendered_last_move = None
 
-        # 同一尺寸下，网格保持在画布中；局面刷新只替换棋子和上一手标记。
-        canvas.delete("stone")
+        # 同一尺寸下，网格保持在画布中；只更新发生变化的格子。此前这里会
+        # delete("stone") 后重画全部棋子，即使只多落了一手，也会使棋盘闪动。
+        if (
+            self._rendered_board is None
+            or len(self._rendered_board) != board_size
+            or any(len(row) != board_size for row in self._rendered_board)
+        ):
+            self._rendered_board = [[EMPTY for _ in range(board_size)] for _ in range(board_size)]
 
         radius = cell * 0.43
         for row in range(board_size):
             for col in range(board_size):
                 color = self.state.board[row][col]
+                if self._rendered_board[row][col] == color:
+                    continue
+                stone_tag = f"stone-{row}-{col}"
+                canvas.delete(stone_tag)
                 if color == EMPTY:
+                    self._rendered_board[row][col] = EMPTY
                     continue
                 x, y = x0 + col * cell, y0 + row * cell
                 if color == BLACK:
@@ -1201,7 +1277,7 @@ class GomokuApp:
                         y + radius,
                         fill="#1f1f1f",
                         outline="#080808",
-                        tags="stone",
+                        tags=("stone", stone_tag),
                     )
                 else:
                     canvas.create_oval(
@@ -1211,22 +1287,30 @@ class GomokuApp:
                         y + radius,
                         fill="#f8f6ed",
                         outline="#555555",
-                        tags="stone",
+                        tags=("stone", stone_tag),
                     )
+                self._rendered_board[row][col] = color
 
-        if self.state.last_move:
-            x = x0 + self.state.last_move.col * cell
-            y = y0 + self.state.last_move.row * cell
-            marker = max(2.5, cell * 0.09)
-            canvas.create_oval(
-                x - marker,
-                y - marker,
-                x + marker,
-                y + marker,
-                fill="#e34b2d",
-                outline="",
-                tags="stone",
-            )
+        last_move = self.state.last_move
+        rendered_last_move = (
+            (last_move.row, last_move.col, last_move.color) if last_move is not None else None
+        )
+        if self._rendered_last_move != rendered_last_move:
+            canvas.delete("last-move")
+            if last_move is not None:
+                x = x0 + last_move.col * cell
+                y = y0 + last_move.row * cell
+                marker = max(2.5, cell * 0.09)
+                canvas.create_oval(
+                    x - marker,
+                    y - marker,
+                    x + marker,
+                    y + marker,
+                    fill="#e34b2d",
+                    outline="",
+                    tags=("stone", "last-move"),
+                )
+            self._rendered_last_move = rendered_last_move
 
     def _on_board_click(self, event: tk.Event[tk.Misc]) -> None:
         if self.replay is not None:
@@ -1393,6 +1477,7 @@ class GomokuApp:
         )
         prefix = f"系列赛第 {series_round}/{self.series_total_rounds} 局：" if series_round else ""
         self._set_status(f"{prefix}选手 {first_player.player_id} 先行（黑方）。")
+        self._select_sidebar_page(1)
         self._refresh()
         self._advance_turn()
 
@@ -1878,6 +1963,7 @@ class GomokuApp:
         self._set_replay_cursor(0)
         self._append_log(f"\n[回放] 已载入 {replay.source_path}\n")
         self._set_status(f"已载入对局回放：{replay.source_path.name}；可逐手或自动播放。")
+        self._select_sidebar_page(1)
         self._refresh()
 
     def _set_replay_cursor(self, cursor: int) -> None:
@@ -1960,6 +2046,7 @@ class GomokuApp:
         self.paused = False
         self.revision += 1
         self._set_status("已退出回放；当前为空棋盘，可配置后开始新对局。")
+        self._select_sidebar_page(0)
         self._refresh()
 
     def _copy_request(self) -> None:
@@ -1978,14 +2065,32 @@ class GomokuApp:
         self._refresh_controls()
 
     def _set_status(self, message: str, error: bool = False) -> None:
-        self.status_var.set(("错误：" if error else "") + message)
+        self._set_var_if_changed(
+            self.status_var,
+            ("错误：" if error else "") + message,
+        )
+
+    def _select_sidebar_page(self, index: int) -> None:
+        """图形界面中切换右栏页面；允许无 Tk 控件的逻辑测试直接复用流程。"""
+        notebook = getattr(self, "sidebar_notebook", None)
+        if notebook is not None:
+            notebook.select(index)
+
+    @staticmethod
+    def _set_var_if_changed(variable: StringVar, value: str) -> None:
+        """避免给 Tk 变量重复写入相同内容，从而减少无意义的控件重绘。"""
+        if variable.get() != value:
+            variable.set(value)
 
     @staticmethod
     def _set_text(widget: scrolledtext.ScrolledText, text: str) -> None:
+        """替换只读文本，同时保持用户当前查看的位置。"""
+        vertical_position = widget.yview()[0]
         widget.configure(state="normal")
         widget.delete("1.0", "end")
         widget.insert("1.0", text)
         widget.configure(state="disabled")
+        widget.yview_moveto(vertical_position)
 
     def _append_log(self, text: str) -> None:
         self.log_text.configure(state="normal")
