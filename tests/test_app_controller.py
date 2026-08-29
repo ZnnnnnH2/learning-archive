@@ -26,7 +26,7 @@ if PYSIDE6_AVAILABLE:
         solver_program_problem,
     )
     from cube_view import configure_opengl_surface_format  # noqa: E402
-    from cube_model import CubeState  # noqa: E402
+    from cube_model import CubeState, apply_move, format_course_input, parse_course_input  # noqa: E402
     from solver_runner import SolverResult, SolverStatus  # noqa: E402
 
 
@@ -152,6 +152,34 @@ class AppControllerTests(unittest.TestCase):
         self.window._on_solver_completed(self._success(()))
         self.assertIsNone(self.window.session)
         self.assertIn("为空", self.window.status_label.text())
+
+    def test_manual_actions_use_the_current_discrete_state_and_course_mapping(self) -> None:
+        initial = CubeState.solved(("y", "r", "g", "p", "w", "b"))
+        self.window._restore_state = initial
+        self.window.cube_view.set_state(apply_move(initial, "0+"))
+        self.window.manual_actions_input.setText("6- 4+")
+
+        self.window._run_manual_actions()
+
+        session = self.window.session
+        assert session is not None
+        self.assertEqual(session.initial, apply_move(initial, "0+"))
+        self.assertEqual(session.actions, ("6-", "4+"))
+        self.assertEqual(session.replay.states[-1], apply_move(apply_move(session.initial, "6-"), "4+"))
+        self.assertTrue(self.window._animating)
+
+    def test_restore_and_copy_use_the_canonical_course_input_orientation(self) -> None:
+        initial = CubeState.solved(("y", "r", "g", "p", "w", "b"))
+        moved = apply_move(initial, "8-")
+        self.window._restore_state = initial
+        self.window.cube_view.set_state(moved)
+
+        self.window._copy_current_state()
+        self.assertEqual(parse_course_input(QApplication.clipboard().text()), moved)
+
+        self.window._restore_initial_state()
+        self.assertEqual(self.window.cube_view.state, initial)
+        self.assertIsNone(self.window.session)
 
 
 if __name__ == "__main__":

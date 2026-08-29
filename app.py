@@ -35,12 +35,18 @@ from PySide6.QtWidgets import (
 )
 
 try:  # Support both ``python app.py`` and ``python -m cube.visualizer.app``.
-    from .cube_model import CubeState, is_goal, parse_course_input
+    from .cube_model import (
+        CubeState,
+        describe_move,
+        format_course_input,
+        is_goal,
+        parse_course_input,
+    )
     from .cube_view import CubeView, configure_opengl_surface_format
     from .replay import ReplaySession
     from .solver_runner import SolverResult, SolverRunner
 except ImportError:  # pragma: no cover - direct launcher path.
-    from cube_model import CubeState, is_goal, parse_course_input
+    from cube_model import CubeState, describe_move, format_course_input, is_goal, parse_course_input
     from cube_view import CubeView, configure_opengl_surface_format
     from replay import ReplaySession
     from solver_runner import SolverResult, SolverRunner
@@ -156,6 +162,9 @@ class CubeVisualizerWindow(QMainWindow):
 
         self._session: VisualizerSession | None = None
         self._pending_initial: CubeState | None = None
+        # This is the last valid state explicitly previewed or sent to a
+        # solver.  "还原到初态" never guesses a solved state from colours.
+        self._restore_state: CubeState | None = None
         self._animation_clock = QElapsedTimer()
         self._animation_timer = QTimer(self)
         self._animation_timer.setInterval(ANIMATION_FRAME_MS)
@@ -187,6 +196,12 @@ class CubeVisualizerWindow(QMainWindow):
         self.reset_camera_button = QPushButton("重置视角")
         self.reset_camera_button.clicked.connect(self.cube_view.reset_camera)
         camera_row.addWidget(self.reset_camera_button)
+        self.restore_button = QPushButton("还原到初态")
+        self.restore_button.clicked.connect(self._restore_initial_state)
+        camera_row.addWidget(self.restore_button)
+        self.copy_state_button = QPushButton("复制当前状态")
+        self.copy_state_button.clicked.connect(self._copy_current_state)
+        camera_row.addWidget(self.copy_state_button)
         camera_row.addStretch(1)
         camera_tip = QLabel("左键拖动旋转视角；滚轮缩放")
         camera_tip.setStyleSheet("color: #667085;")
@@ -222,6 +237,23 @@ class CubeVisualizerWindow(QMainWindow):
         input_buttons.addWidget(self.sample_button)
         input_layout.addLayout(input_buttons)
         controls.addWidget(input_group)
+
+        manual_group = QGroupBox("手动旋转")
+        manual_layout = QVBoxLayout(manual_group)
+        manual_tip = QLabel("输入空白分隔的课程动作（例如：3- 6+ 4-），将从当前离散状态开始播放。")
+        manual_tip.setWordWrap(True)
+        manual_tip.setStyleSheet("color: #667085;")
+        manual_layout.addWidget(manual_tip)
+        manual_row = QHBoxLayout()
+        self.manual_actions_input = QLineEdit()
+        self.manual_actions_input.setPlaceholderText("例如：0+ 6- 4+")
+        self.manual_actions_input.returnPressed.connect(self._run_manual_actions)
+        self.manual_rotate_button = QPushButton("旋转")
+        self.manual_rotate_button.clicked.connect(self._run_manual_actions)
+        manual_row.addWidget(self.manual_actions_input, stretch=1)
+        manual_row.addWidget(self.manual_rotate_button)
+        manual_layout.addLayout(manual_row)
+        controls.addWidget(manual_group)
 
         solver_group = QGroupBox("学生 solver（已编译 executable）")
         solver_layout = QGridLayout(solver_group)
@@ -305,8 +337,72 @@ class CubeVisualizerWindow(QMainWindow):
             self._cancel_animation()
         if self._session is not None:
             self._session.replay.pause()
+        self._restore_state = state
         self.cube_view.set_state(state)
         self._set_status("初态格式有效，已显示在三维视图中。")
+        self._update_controls()
+
+    @Slot()
+    def _restore_initial_state(self) -> None:
+        """Return to the last valid initial state without assuming it is solved."""
+
+        if self.runner.is_running or self._restore_state is None:
+            return
+        self._clear_session()
+        self.cube_view.set_state(self._restore_state)
+        self._set_status("已还原到最近一次预览或运行时的初态。")
+        self._update_controls()
+
+    @Slot()
+    def _copy_current_state(self) -> None:
+        """Copy a canonical course-input representation of the discrete state."""
+
+        text = format_course_input(self.cube_view.state)
+        QApplication.clipboard().setText(text)
+        self._set_status("已复制当前离散状态；可直接粘贴到初态输入框或 solver stdin。")
+
+    @Slot()
+    def _run_manual_actions(self) -> None:
+        """Animate a user-entered action sequence from the currently displayed state."""
+
+        if self.runner.is_running:
+            return
+        raw_actions = self.manual_actions_input.text()
+        tokens = tuple(raw_actions.split())
+        if not tokens:
+            self._set_status("请输入至少一个动作，例如：3- 6+ 4-。", error=True)
+            return
+        for index, token in enumerate(tokens, start=1):
+            try:
+                describe_move(token)
+            except (TypeError, ValueError) as error:
+                self._set_status(f"手动动作第 {index} 项无效：{error}", error=True)
+                return
+
+        # Cancelling first restores a partially animated turn to its exact
+        # discrete pre-turn state.  That is the only state used as the manual
+        # sequence's initial state, so copying and animation cannot diverge.
+        self._cancel_animation()
+        initial = self.cube_view.state
+        self._clear_session()
+        replay = ReplaySession(initial, tokens)
+        self._session = VisualizerSession(
+            initial=initial,
+            actions=tokens,
+            replay=replay,
+            stdout=b"",
+            stderr=b"",
+        )
+        self.actions_output.setPlainText(self._format_actions(tokens))
+        self.cube_view.set_state(initial)
+        self._set_slider_position(0, maximum=replay.total_steps)
+        self._update_timeline_labels()
+        self.final_label.setText("最终复原：手动旋转中")
+        self.final_label.setStyleSheet("")
+        self._set_status(f"正在手动播放 {len(tokens)} 个动作。")
+        replay.play()
+        self._start_next_animation(auto_continue=True)
+        self._update_controls()
 
     @Slot()
     def _choose_solver(self) -> None:
@@ -354,6 +450,7 @@ class CubeVisualizerWindow(QMainWindow):
             return
 
         self._pending_initial = initial
+        self._restore_state = initial
         self.stdout_output.clear()
         self.stderr_output.clear()
         self._set_status("正在启动 solver；最长等待 5 分钟，stdout/stderr 各最多 1 MiB。")
@@ -625,6 +722,10 @@ class CubeVisualizerWindow(QMainWindow):
         self.stop_button.setEnabled(running)
         self.choose_solver_button.setEnabled(not running)
         self.solver_path.setEnabled(not running)
+        self.restore_button.setEnabled(not running and self._restore_state is not None)
+        self.manual_actions_input.setEnabled(not running)
+        self.manual_rotate_button.setEnabled(not running)
+        self.copy_state_button.setEnabled(True)
         self.previous_button.setEnabled(has_session and not running and replay is not None and replay.index > 0)
         self.next_button.setEnabled(has_session and not running and replay is not None and not replay.completed)
         self.progress_slider.setEnabled(has_session and not running)
