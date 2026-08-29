@@ -51,6 +51,50 @@ conda run -n gobang-gui python gobang_gui.py
 当前方、上一手、棋盘尺寸、规则及时间限制。棋盘中 `0` 为空、`1` 为黑、`2` 为白；
 坐标为 0-based `[row, col]`。
 
+例如，在 9×9 棋盘上已走完三手、轮到白方时，程序会收到：
+
+```json
+{
+  "protocol_version": "gomoku-1.0",
+  "case_id": "a1b2c3d4:003",
+  "game_id": "a1b2c3d4",
+  "ply": 3,
+  "board_size": 9,
+  "board": [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 1, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 1, 2, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [0, 0, 0, 0, 0, 0, 0, 0, 0]
+  ],
+  "side_to_move": 2,
+  "player_color": 2,
+  "last_move": [3, 3],
+  "last_move_color": 1,
+  "rules": {
+    "id": "renju_classroom",
+    "win_length": 5,
+    "black_win": "exactly_five",
+    "white_win": "five_or_more",
+    "first_player_color": 1,
+    "first_player_win": "exactly_five",
+    "forbidden_moves": "first_player_overline_double_four_double_three",
+    "forbidden_player": "first_player_black",
+    "opening": "first_player_center",
+    "opening_center": [4, 4],
+    "adjudication": "automatic",
+    "time_limit_ms": 2000
+  }
+}
+```
+
+其中 `side_to_move` 与 `player_color` 是本次应落子的颜色；`last_move` 为上一手，开局时
+两个 `last_move` 字段均为 `null`。`case_id` 用于关联本局的这一回合。
+
 程序必须输出恰好一行带 `move` 的 JSON：
 
 ```json
