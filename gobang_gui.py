@@ -50,6 +50,7 @@ PROGRAM = "program"
 
 AUTO_STEP_DELAY_MS = 180
 REPLAY_STEP_DELAY_MS = 450
+RESIZE_REDRAW_DELAY_MS = 16
 MAX_OUTPUT_CHARS = 1_000_000
 RECORD_VERSION = "gomoku-record-1.0"
 
@@ -592,6 +593,8 @@ class GomokuApp:
 
         self.board_cell = 40.0
         self.board_origin = (42.0, 42.0)
+        self._board_layout: tuple[int, int, int] | None = None
+        self._board_resize_after_id: str | None = None
 
         self.mode_var = StringVar(value=MODE_HUMAN_AI)
         self.human_color_var = StringVar(value="black")
@@ -637,10 +640,24 @@ class GomokuApp:
         outer.columnconfigure(1, weight=0)
         outer.rowconfigure(1, weight=1)
 
-        ttk.Label(outer, text="五子棋 · 对战裁判台", style="Title.TLabel").grid(
+        # 状态文字可能换行。把标题栏固定为两行文本的高度，避免它挤压棋盘并
+        # 让网格随每条状态消息缩放、位移。
+        header = ttk.Frame(outer, height=48)
+        header.grid(row=0, column=0, columnspan=2, sticky="ew")
+        header.grid_propagate(False)
+        header.columnconfigure(0, weight=1)
+        header.columnconfigure(1, weight=0)
+        header.rowconfigure(0, weight=1)
+        ttk.Label(header, text="五子棋 · 对战裁判台", style="Title.TLabel").grid(
             row=0, column=0, sticky="w"
         )
-        ttk.Label(outer, textvariable=self.status_var, style="Status.TLabel", wraplength=520).grid(
+        ttk.Label(
+            header,
+            textvariable=self.status_var,
+            style="Status.TLabel",
+            wraplength=520,
+            justify="right",
+        ).grid(
             row=0, column=1, sticky="e", padx=(16, 0)
         )
 
@@ -655,7 +672,7 @@ class GomokuApp:
             cursor="crosshair",
         )
         self.board_canvas.grid(row=0, column=0, sticky="nsew")
-        self.board_canvas.bind("<Configure>", lambda _event: self._draw_board())
+        self.board_canvas.bind("<Configure>", self._on_board_canvas_configure)
         self.board_canvas.bind("<Button-1>", self._on_board_click)
 
         controls = ttk.Frame(board_area, padding=(0, 10, 0, 0))
@@ -1086,11 +1103,25 @@ class GomokuApp:
         self.replay_auto_button.configure(text="停止自动回放" if self.replay_autoplay else "自动回放")
         self.exit_replay_button.configure(state="normal" if replay_active else "disabled")
 
+    def _on_board_canvas_configure(self, _event: tk.Event[tk.Misc]) -> None:
+        """合并连续的尺寸事件，避免窗口拖动时反复重绘整张棋盘。"""
+        if self._board_resize_after_id is not None:
+            self.root.after_cancel(self._board_resize_after_id)
+        self._board_resize_after_id = self.root.after(
+            RESIZE_REDRAW_DELAY_MS, self._draw_board_after_resize
+        )
+
+    def _draw_board_after_resize(self) -> None:
+        self._board_resize_after_id = None
+        self._draw_board()
+
     def _draw_board(self) -> None:
         canvas = self.board_canvas
         board_size = self.state.board_size
-        width = max(canvas.winfo_width(), 200)
-        height = max(canvas.winfo_height(), 200)
+        width = canvas.winfo_width()
+        height = canvas.winfo_height()
+        if width <= 1 or height <= 1:
+            return
         margin = max(28.0, min(width, height) * 0.065)
         cell = (min(width, height) - 2 * margin) / (board_size - 1)
         board_pixels = cell * (board_size - 1)
@@ -1099,29 +1130,61 @@ class GomokuApp:
         self.board_cell = cell
         self.board_origin = (x0, y0)
 
-        canvas.delete("all")
-        canvas.create_rectangle(0, 0, width, height, fill="#e6bd75", outline="")
-        for index in range(board_size):
-            x = x0 + index * cell
-            y = y0 + index * cell
-            canvas.create_line(x0, y, x0 + board_pixels, y, fill="#4c3720", width=1)
-            canvas.create_line(x, y0, x, y0 + board_pixels, fill="#4c3720", width=1)
-            canvas.create_text(x, y0 - 18, text=chr(ord("A") + index), fill="#4c3720", font=("Helvetica", 10))
-            canvas.create_text(x0 - 18, y, text=str(index + 1), fill="#4c3720", font=("Helvetica", 10))
+        layout = (board_size, width, height)
+        if self._board_layout != layout:
+            canvas.delete("all")
+            canvas.create_rectangle(0, 0, width, height, fill="#e6bd75", outline="", tags="board")
+            for index in range(board_size):
+                x = x0 + index * cell
+                y = y0 + index * cell
+                canvas.create_line(
+                    x0, y, x0 + board_pixels, y, fill="#4c3720", width=1, tags="board"
+                )
+                canvas.create_line(
+                    x, y0, x, y0 + board_pixels, fill="#4c3720", width=1, tags="board"
+                )
+                canvas.create_text(
+                    x,
+                    y0 - 18,
+                    text=chr(ord("A") + index),
+                    fill="#4c3720",
+                    font=("Helvetica", 10),
+                    tags="board",
+                )
+                canvas.create_text(
+                    x0 - 18,
+                    y,
+                    text=str(index + 1),
+                    fill="#4c3720",
+                    font=("Helvetica", 10),
+                    tags="board",
+                )
 
-        star_radius = max(2, cell * 0.07)
-        center = board_size // 2
-        offset = max(2, board_size // 4)
-        star_points = {
-            (center, center),
-            (center - offset, center - offset),
-            (center - offset, center + offset),
-            (center + offset, center - offset),
-            (center + offset, center + offset),
-        }
-        for row, col in star_points:
-            x, y = x0 + col * cell, y0 + row * cell
-            canvas.create_oval(x - star_radius, y - star_radius, x + star_radius, y + star_radius, fill="#49331d", outline="")
+            star_radius = max(2, cell * 0.07)
+            center = board_size // 2
+            offset = max(2, board_size // 4)
+            star_points = {
+                (center, center),
+                (center - offset, center - offset),
+                (center - offset, center + offset),
+                (center + offset, center - offset),
+                (center + offset, center + offset),
+            }
+            for row, col in star_points:
+                x, y = x0 + col * cell, y0 + row * cell
+                canvas.create_oval(
+                    x - star_radius,
+                    y - star_radius,
+                    x + star_radius,
+                    y + star_radius,
+                    fill="#49331d",
+                    outline="",
+                    tags="board",
+                )
+            self._board_layout = layout
+
+        # 同一尺寸下，网格保持在画布中；局面刷新只替换棋子和上一手标记。
+        canvas.delete("stone")
 
         radius = cell * 0.43
         for row in range(board_size):
@@ -1131,15 +1194,39 @@ class GomokuApp:
                     continue
                 x, y = x0 + col * cell, y0 + row * cell
                 if color == BLACK:
-                    canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="#1f1f1f", outline="#080808")
+                    canvas.create_oval(
+                        x - radius,
+                        y - radius,
+                        x + radius,
+                        y + radius,
+                        fill="#1f1f1f",
+                        outline="#080808",
+                        tags="stone",
+                    )
                 else:
-                    canvas.create_oval(x - radius, y - radius, x + radius, y + radius, fill="#f8f6ed", outline="#555555")
+                    canvas.create_oval(
+                        x - radius,
+                        y - radius,
+                        x + radius,
+                        y + radius,
+                        fill="#f8f6ed",
+                        outline="#555555",
+                        tags="stone",
+                    )
 
         if self.state.last_move:
             x = x0 + self.state.last_move.col * cell
             y = y0 + self.state.last_move.row * cell
             marker = max(2.5, cell * 0.09)
-            canvas.create_oval(x - marker, y - marker, x + marker, y + marker, fill="#e34b2d", outline="")
+            canvas.create_oval(
+                x - marker,
+                y - marker,
+                x + marker,
+                y + marker,
+                fill="#e34b2d",
+                outline="",
+                tags="stone",
+            )
 
     def _on_board_click(self, event: tk.Event[tk.Misc]) -> None:
         if self.replay is not None:
