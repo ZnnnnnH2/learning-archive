@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """五子棋对战裁判台。
 
-学生只提交一个 C++ 单文件程序。每个 AI 回合，裁判台都会启动一个全新进程，
+学生可提交一个 C++ 单文件源码，或当前系统可直接运行的程序。每个 AI 回合，
+裁判台都会启动一个全新进程，
 把当前棋局的一行 JSON 写入 stdin，并从 stdout 读取唯一的一行 JSON 落子结果。
 界面本身是可信裁判：它维护棋盘、判定胜负、拒绝非法棋，并记录双方日志。
 """
@@ -15,6 +16,7 @@ import queue
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -55,6 +57,66 @@ SIDEBAR_WIDTH = 430
 SIDEBAR_TEXT_WRAP = 390
 MAX_OUTPUT_CHARS = 1_000_000
 RECORD_VERSION = "gomoku-record-1.0"
+CPP_SOURCE_SUFFIXES = frozenset({".cp", ".cc", ".cpp", ".cxx", ".c++"})
+MACH_O_MAGICS = frozenset(
+    {
+        b"\xfe\xed\xfa\xce",
+        b"\xce\xfa\xed\xfe",
+        b"\xfe\xed\xfa\xcf",
+        b"\xcf\xfa\xed\xfe",
+        b"\xca\xfe\xba\xbe",
+        b"\xbe\xba\xfe\xca",
+        b"\xca\xfe\xba\xbf",
+        b"\xbf\xba\xfe\xca",
+    }
+)
+
+
+def is_cpp_source(path: Path) -> bool:
+    """Return whether *path* is one of the supported C++ single-file forms."""
+
+    return path.suffix == ".C" or path.suffix.lower() in CPP_SOURCE_SUFFIXES
+
+
+def executable_problem(program: Path, *, host_platform: str | None = None) -> str | None:
+    """Explain why *program* cannot run directly on the current platform."""
+
+    platform = sys.platform if host_platform is None else host_platform
+    if not program.is_file():
+        return f"找不到程序文件：{program}"
+    if is_cpp_source(program):
+        return f"{program.name} 是 C++ 源文件，需要先编译。"
+    try:
+        with program.open("rb") as binary:
+            header = binary.read(4)
+    except OSError as error:
+        return f"无法读取程序文件：{error}"
+
+    is_mach_o = header in MACH_O_MAGICS
+    if platform.startswith("darwin"):
+        if header == b"\x7fELF":
+            return f"{program.name} 是 Linux ELF 程序，不能在 macOS 上运行；请在 Mac 上重新编译源码。"
+        if header[:2] == b"MZ":
+            return f"{program.name} 是 Windows .exe，不能在 macOS 上直接运行；请在 Mac 上重新编译源码。"
+    elif platform.startswith("win"):
+        if header == b"\x7fELF":
+            return f"{program.name} 是 Linux ELF 程序，不能在 Windows 上运行；请在 Windows 上重新编译源码。"
+        if is_mach_o:
+            return f"{program.name} 是 macOS 程序，不能在 Windows 上运行；请在 Windows 上重新编译源码。"
+        if program.suffix.lower() != ".exe":
+            return "Windows 下请选择编译生成的 .exe 程序。"
+        if header[:2] != b"MZ":
+            return f"{program.name} 不是有效的 Windows .exe 程序。"
+        return None
+    else:
+        if header[:2] == b"MZ":
+            return f"{program.name} 是 Windows .exe，不能在当前系统上运行。"
+        if is_mach_o:
+            return f"{program.name} 是 macOS 程序，不能在当前系统上运行。"
+
+    if not os.access(program, os.X_OK):
+        return f"程序没有可执行权限：{program.name}。请先在终端执行 chmod +x。"
+    return None
 
 
 @dataclass(frozen=True)
@@ -352,9 +414,10 @@ class GomokuState:
 
 
 class StudentProgram:
-    """一份学生 C++ 单文件程序及其独立的临时构建目录。"""
+    """一份学生 C++ 源码或本机可直接运行的程序。"""
 
     def __init__(self) -> None:
+        self.selected_path: Path | None = None
         self.source_path: Path | None = None
         self.executable_path: Path | None = None
         self.build_dir = Path(tempfile.mkdtemp(prefix="gomoku-player-"))
@@ -364,34 +427,93 @@ class StudentProgram:
         configured = os.environ.get("CXX")
         if configured and shutil.which(configured):
             return configured
-        return shutil.which("c++") or shutil.which("g++") or shutil.which("clang++")
+        candidates = (
+            ("cl", "clang-cl", "c++", "g++", "clang++")
+            if sys.platform.startswith("win")
+            else ("c++", "g++", "clang++")
+        )
+        return next((path for name in candidates if (path := shutil.which(name))), None)
 
     @property
     def label(self) -> str:
-        return self.source_path.name if self.source_path is not None else "未选择程序"
+        return self.selected_path.name if self.selected_path is not None else "未选择程序"
 
     @property
     def is_ready(self) -> bool:
-        return self.executable_path is not None and self.executable_path.exists()
+        return (
+            self.executable_path is not None
+            and executable_problem(self.executable_path) is None
+        )
+
+    @property
+    def needs_compilation(self) -> bool:
+        return self.source_path is not None
+
+    @property
+    def working_directory(self) -> Path:
+        if self.source_path is not None:
+            return self.build_dir
+        if self.executable_path is not None:
+            return self.executable_path.parent
+        return self.build_dir
 
     def select_source(self, source_path: Path) -> None:
-        self.source_path = source_path
+        self.selected_path = Path(source_path).expanduser().resolve()
+        self.source_path = self.selected_path
         self.executable_path = None
+
+    def select_executable(self, executable_path: Path) -> str | None:
+        self.selected_path = Path(executable_path).expanduser().resolve()
+        self.source_path = None
+        self.executable_path = self.selected_path
+        return executable_problem(self.executable_path)
+
+    def select_program(self, path: Path) -> tuple[bool, str]:
+        selected = Path(path).expanduser().resolve()
+        if not selected.is_file():
+            self.selected_path = selected
+            self.source_path = None
+            self.executable_path = None
+            return False, f"找不到程序文件：{selected}"
+        if is_cpp_source(selected):
+            self.select_source(selected)
+            return True, "已选择 C++ 源文件；请点击“编译”。"
+        problem = self.select_executable(selected)
+        if problem is not None:
+            return False, problem
+        return True, "已选择本机可运行程序，无需编译。"
 
     def compile(self) -> tuple[bool, str]:
         if self.source_path is None:
-            return False, "请先选择学生的 .cpp 文件。"
+            return False, "请先选择学生的 C++ 源文件。"
         self.executable_path = None
         compiler = self.find_compiler()
         if compiler is None:
-            return False, "未找到 C++ 编译器。请安装或把 CXX 指向 c++ / g++ / clang++。"
+            return False, (
+                "未找到 C++ 编译器。请安装或把 CXX 指向 c++ / g++ / clang++；"
+                "Windows 也支持 cl / clang-cl。"
+            )
 
-        suffix = ".exe" if os.name == "nt" else ""
+        suffix = ".exe" if sys.platform.startswith("win") else ""
         executable = self.build_dir / f"student_solver{suffix}"
-        command = [compiler, "-std=c++17", "-O2", str(self.source_path), "-o", str(executable)]
+        compiler_name = Path(compiler).name.lower()
+        if compiler_name in {"cl", "cl.exe", "clang-cl", "clang-cl.exe"}:
+            command = [
+                compiler,
+                "/nologo",
+                "/std:c++17",
+                "/O2",
+                "/EHsc",
+                "/utf-8",
+                str(self.source_path),
+                f"/Fe:{executable}",
+            ]
+        else:
+            command = [compiler, "-std=c++17", "-O2", str(self.source_path), "-o", str(executable)]
         try:
             result = subprocess.run(
                 command,
+                cwd=str(self.build_dir),
                 text=True,
                 encoding="utf-8",
                 errors="replace",
@@ -410,6 +532,9 @@ class StudentProgram:
             detail = compiler_text or f"编译失败（退出码 {result.returncode}）"
             return False, detail
 
+        problem = executable_problem(executable)
+        if problem is not None:
+            return False, f"编译器已结束，但输出程序不可运行：{problem}"
         self.executable_path = executable
         return True, compiler_text or "编译成功。"
 
@@ -421,14 +546,19 @@ class StudentProgram:
         require_case_id: bool,
     ) -> tuple[bool, str, dict[str, Any] | None]:
         if not self.is_ready or self.executable_path is None:
-            return False, "该方程序尚未编译。", None
+            problem = (
+                executable_problem(self.executable_path)
+                if self.executable_path is not None
+                else None
+            )
+            return False, problem or "该方程序尚未选择或编译。", None
 
         stdin_text = json.dumps(request, ensure_ascii=False, separators=(",", ":")) + "\n"
         process: subprocess.Popen[str] | None = None
         try:
             process = subprocess.Popen(
                 [str(self.executable_path)],
-                cwd=str(self.build_dir),
+                cwd=str(self.working_directory),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -888,7 +1018,11 @@ class GomokuApp:
         )
         buttons = ttk.Frame(card)
         buttons.pack(fill="x", pady=(7, 0))
-        choose = ttk.Button(buttons, text="选择 .cpp", command=lambda c=color: self._choose_source(c))
+        choose = ttk.Button(
+            buttons,
+            text="选择源码 / 程序",
+            command=lambda c=color: self._choose_program(c),
+        )
         choose.pack(side="left")
         compile_button = ttk.Button(buttons, text="编译", command=lambda c=color: self._compile_player(c))
         compile_button.pack(side="left", padx=6)
@@ -1077,17 +1211,18 @@ class GomokuApp:
                 role_text = f"选手 {slot.player_id} · C++ 程序（每手启动一个新进程）"
             self._set_var_if_changed(self.player_role_vars[color], role_text)
 
-            if slot.program.source_path is None:
-                self._set_var_if_changed(self.player_source_vars[color], "未选择 .cpp 文件")
+            if slot.program.selected_path is None:
+                self._set_var_if_changed(self.player_source_vars[color], "未选择源码或可运行程序")
                 self._set_var_if_changed(self.player_build_vars[color], "待选择")
             else:
                 self._set_var_if_changed(
-                    self.player_source_vars[color], str(slot.program.source_path)
+                    self.player_source_vars[color], str(slot.program.selected_path)
                 )
-                self._set_var_if_changed(
-                    self.player_build_vars[color],
-                    "已编译" if slot.program.is_ready else "待编译",
-                )
+                if slot.program.needs_compilation:
+                    build_text = "已编译" if slot.program.is_ready else "待编译"
+                else:
+                    build_text = "可直接运行" if slot.program.is_ready else "不可运行"
+                self._set_var_if_changed(self.player_build_vars[color], build_text)
 
     def _refresh_controls(self) -> None:
         match_configuration_enabled = (
@@ -1118,7 +1253,7 @@ class GomokuApp:
                 and not self.series_active
                 and (not self.match_active or self.paused)
                 and self.players[color].kind == PROGRAM
-                and self.players[color].program.source_path is not None
+                and self.players[color].program.needs_compilation
             )
             self.player_compile_buttons[color].configure(state="normal" if can_compile else "disabled")
 
@@ -1371,7 +1506,7 @@ class GomokuApp:
             if not self.players[color].program.is_ready
         ]
         if missing:
-            self._set_status(f"请先编译{'、'.join(missing)}方的 C++ 程序。", error=True)
+            self._set_status(f"请先为{'、'.join(missing)}方选择可运行程序，或编译已选源码。", error=True)
             return
 
         if self.mode_var.get() == MODE_AI_AI:
@@ -1549,18 +1684,22 @@ class GomokuApp:
         self._set_status("黑白方的程序槽位已交换。")
         self._refresh()
 
-    def _choose_source(self, color: int) -> None:
+    def _choose_program(self, color: int) -> None:
         if self.busy or self.match_active or self.series_active:
             return
+        filetypes = [("C++ 源文件", "*.cp *.cpp *.cc *.cxx *.c++ *.C")]
+        if sys.platform.startswith("win"):
+            filetypes.append(("Windows 可执行程序", "*.exe"))
+        filetypes.append(("所有文件", "*.*"))
         filename = filedialog.askopenfilename(
             parent=self.root,
-            title=f"选择{STONE_NAME[color]}方提交的 C++ 单文件",
-            filetypes=[("C++ source", "*.cpp *.cc *.cxx *.C"), ("All files", "*.*")],
+            title=f"选择{STONE_NAME[color]}方的 C++ 源文件或可运行程序",
+            filetypes=filetypes,
         )
         if not filename:
             return
-        self.players[color].program.select_source(Path(filename))
-        self._set_status(f"已选择{STONE_NAME[color]}方源文件；请点击“编译”。")
+        ok, message = self.players[color].program.select_program(Path(filename))
+        self._set_status(f"{STONE_NAME[color]}方：{message}", error=not ok)
         self._refresh()
 
     def _compile_player(self, color: int) -> None:
@@ -1568,7 +1707,10 @@ class GomokuApp:
             return
         program = self.players[color].program
         if program.source_path is None:
-            self._set_status(f"请先选择{STONE_NAME[color]}方的 .cpp 文件。", error=True)
+            if program.is_ready:
+                self._set_status(f"{STONE_NAME[color]}方已选择可运行程序，无需编译。")
+            else:
+                self._set_status(f"请先选择{STONE_NAME[color]}方的 C++ 源文件。", error=True)
             return
         self._set_busy(True, f"正在编译{STONE_NAME[color]}方程序…")
 
