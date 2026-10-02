@@ -1,0 +1,12 @@
+# ── Core Runtime ──
+PyQt6>=6.6
+requests>=2.31
+Pillow>=10.0
+numpy>=1.24
+
+# ── Model API ──
+# Configure any OpenAI-compatible /chat/completions endpoint via MODEL_API_*.
+
+# ── Vision ──
+opencv-python>=4.8
+
