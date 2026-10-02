@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local event state and generated runner artifacts
+event-data/
+artifacts/
+*.sqlite3
+*.sqlite3-*
+*.jsonl
+
+# Editor and operating-system files
+.DS_Store
+.vscode/

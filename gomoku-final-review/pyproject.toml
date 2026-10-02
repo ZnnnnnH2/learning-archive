@@ -1,0 +1,8 @@
+[project]
+name = "gomoku-display"
+version = "0.1.0"
+description = "Local, reproducible Gomoku final-review tournament console"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
