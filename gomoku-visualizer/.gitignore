@@ -1,0 +1,10 @@
+# Python runtime artifacts
+__pycache__/
+*.py[cod]
+
+# Local environments and tooling
+.venv/
+.conda/
+
+# macOS Finder metadata
+.DS_Store
