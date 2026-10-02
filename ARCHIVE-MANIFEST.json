@@ -1,0 +1,122 @@
+{
+  "format_version": 1,
+  "migration_date": "2026-10-02",
+  "target": "ZnnnnnH2/learning-archive",
+  "method": "Non-squashed subtree imports with original commits as merge parents; source refs retain original object IDs.",
+  "sources": [
+    {
+      "name": "cs61a-2024",
+      "source_url": "https://github.com/ZnnnnnH2/cs61a-2024",
+      "default_branch": "main",
+      "default_commit": "9e6d1b03a2d21bbca32c8176052d4f53e09cf232",
+      "default_tree": "4a869ac22cdfe66211e990806df9694d20c28051",
+      "commit_count": 3,
+      "license_paths": [],
+      "bundle_sha256": "865f808499003261cab9f05abe23bf01ee52ea0fe2e62d3b43740b7fe33db8ed",
+      "directory": "cs61a-2024",
+      "original_refs": {
+        "refs/heads/main": "9e6d1b03a2d21bbca32c8176052d4f53e09cf232"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/cs61a-2024/main"
+      }
+    },
+    {
+      "name": "cs61c-lab",
+      "source_url": "https://github.com/ZnnnnnH2/cs61c-lab",
+      "default_branch": "main",
+      "default_commit": "eb93c12ab38e1a5bd1177cd8d83338f3e8cdbbeb",
+      "default_tree": "be26d3b9b4908f038afad4d95f4509b1128039ac",
+      "commit_count": 16,
+      "license_paths": [],
+      "bundle_sha256": "f56f33174a4386181bb6139d0f73929fccd357e3743bebc4b770e04e187bf30c",
+      "directory": "cs61c-lab",
+      "original_refs": {
+        "refs/heads/main": "eb93c12ab38e1a5bd1177cd8d83338f3e8cdbbeb",
+        "refs/tags/lab00-backup": "0b3dfdb855db9c93c095d4ca76d355bd6582acaf"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/cs61c-lab/main",
+        "refs/tags/lab00-backup": "refs/tags/archive/cs61c-lab/lab00-backup"
+      },
+      "additional_preserved_tags": {
+        "refs/tags/lab00-backup": "0b3dfdb855db9c93c095d4ca76d355bd6582acaf"
+      }
+    },
+    {
+      "name": "csci-0300-sp25-labs",
+      "source_url": "https://github.com/ZnnnnnH2/csci-0300-sp25-labs",
+      "default_branch": "main",
+      "default_commit": "e30dfb6b7b48abc30b44d8c3052e095446400967",
+      "default_tree": "1ce54aaceaefd3c7b04b43ec8b3fe0786b441739",
+      "commit_count": 14,
+      "license_paths": [],
+      "bundle_sha256": "b0ff0b8ae3aa6fb21230af3430d9e9b62e700a57befa1584a6242ea7a1649c78",
+      "directory": "csci-0300-sp25-labs",
+      "original_refs": {
+        "refs/heads/main": "e30dfb6b7b48abc30b44d8c3052e095446400967"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/csci-0300-sp25-labs/main"
+      }
+    },
+    {
+      "name": "Django-for-me",
+      "source_url": "https://github.com/ZnnnnnH2/Django-for-me",
+      "default_branch": "main",
+      "default_commit": "99ff7dfa4c05861ed39a66f50e397b05baa77690",
+      "default_tree": "3b6285430497b1ff7de0c57065a0fa5346847349",
+      "commit_count": 3,
+      "license_paths": [
+        "LICENSE"
+      ],
+      "bundle_sha256": "4d86444c2c1e340bbce53a3c148bb5f5a9bc55c55a0b48eb7e2861dda81051aa",
+      "directory": "Django-for-me",
+      "original_refs": {
+        "refs/heads/main": "99ff7dfa4c05861ed39a66f50e397b05baa77690"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/Django-for-me/main"
+      }
+    },
+    {
+      "name": "25-CS336",
+      "source_url": "https://github.com/ZnnnnnH2/25-CS336",
+      "default_branch": "main",
+      "default_commit": "c1434a7c2193fa576663c19019769904471376b7",
+      "default_tree": "5f9c39e860ba3b1cfa0572956190728671153690",
+      "commit_count": 1,
+      "license_paths": [
+        "assignment1-basics/LICENSE",
+        "assignment2-systems/LICENSE",
+        "assignment3-scaling/LICENSE",
+        "assignment4-data/LICENSE"
+      ],
+      "bundle_sha256": "95f0b6f37e58752469b21ecbb452043a087b5a0cce764ee020f09cbd1e25a8c4",
+      "directory": "25-CS336",
+      "original_refs": {
+        "refs/heads/main": "c1434a7c2193fa576663c19019769904471376b7"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/25-CS336/main"
+      }
+    },
+    {
+      "name": "cs224n",
+      "source_url": "https://github.com/ZnnnnnH2/cs224n",
+      "default_branch": "main",
+      "default_commit": "cc7ccfcebfe36ef6e1cb61a26bdbcd741fe4adcf",
+      "default_tree": "3ebcf9cfb7d1d6550c2838ee489222f20aae4ccc",
+      "commit_count": 2,
+      "license_paths": [],
+      "bundle_sha256": "26a9e6f6ead023d0429792c8b4a78c849f08cecc4f8ec918fe650f0cca665b06",
+      "directory": "cs224n",
+      "original_refs": {
+        "refs/heads/main": "cc7ccfcebfe36ef6e1cb61a26bdbcd741fe4adcf"
+      },
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/cs224n/main"
+      }
+    }
+  ]
+}
