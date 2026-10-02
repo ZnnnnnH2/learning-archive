@@ -1,0 +1,50 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="tile" x1="152" y1="112" x2="872" y2="944" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111A2C"/>
+      <stop offset="0.54" stop-color="#0A101A"/>
+      <stop offset="1" stop-color="#05070D"/>
+    </linearGradient>
+    <linearGradient id="frame" x1="120" y1="120" x2="904" y2="904" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#3D4C6A"/>
+      <stop offset="0.36" stop-color="#222B3F"/>
+      <stop offset="1" stop-color="#131A28"/>
+    </linearGradient>
+    <linearGradient id="sidebar" x1="156" y1="168" x2="372" y2="864" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#182338"/>
+      <stop offset="1" stop-color="#0B1018"/>
+    </linearGradient>
+    <linearGradient id="sidebarInset" x1="188" y1="188" x2="356" y2="844" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#202D44" stop-opacity="0.78"/>
+      <stop offset="1" stop-color="#0D111B" stop-opacity="0"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="420" y1="182" x2="808" y2="790" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7BE6FF"/>
+      <stop offset="0.52" stop-color="#50A7FF"/>
+      <stop offset="1" stop-color="#7A7BFF"/>
+    </linearGradient>
+    <linearGradient id="prompt" x1="484" y1="326" x2="802" y2="674" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7EE9FF"/>
+      <stop offset="1" stop-color="#6D8EFF"/>
+    </linearGradient>
+    <linearGradient id="cursor" x1="688" y1="628" x2="832" y2="710" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B3F4FF"/>
+      <stop offset="1" stop-color="#A4A3FF"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="64" y="64" width="896" height="896" rx="236" fill="url(#tile)"/>
+  <rect x="88" y="88" width="848" height="848" rx="212" stroke="url(#frame)" stroke-width="24"/>
+  <path d="M164 188H860C853 432 736 740 480 876H292C214 876 164 826 164 748V188Z" fill="#060A12" fill-opacity="0.24"/>
+
+  <rect x="152" y="148" width="232" height="728" rx="116" fill="url(#sidebar)"/>
+  <rect x="172" y="168" width="192" height="688" rx="96" fill="url(#sidebarInset)"/>
+
+  <rect x="196" y="248" width="140" height="74" rx="37" fill="#76E8FF"/>
+  <rect x="196" y="372" width="108" height="64" rx="32" fill="#8B80FF"/>
+
+  <rect x="420" y="184" width="38" height="656" rx="19" fill="url(#accent)"/>
+
+  <path d="M534 332L732 512L534 692" stroke="url(#prompt)" stroke-width="104" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="654" y="632" width="196" height="84" rx="42" fill="url(#cursor)"/>
+</svg>
