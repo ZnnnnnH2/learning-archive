@@ -1,0 +1,212 @@
+{
+  "date": "2026-10-02",
+  "batch": "04",
+  "target": "ZnnnnnH2/learning-archive",
+  "visibility": "public",
+  "previous_main": "4820a70cba81f36f83392a7b713e4d67bb6d7931",
+  "method": "Non-squashed subtree imports, unchanged original commits and explicit namespaced refs.",
+  "sources": [
+    {
+      "name": "agent-study",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "89c46b5403a39c96163696c3dda1041e98f86f80"
+      },
+      "default_branch": "main",
+      "default_head": "89c46b5403a39c96163696c3dda1041e98f86f80",
+      "default_tree": "49cea2268ef7f861f37286c8c2229eef1ed6a846",
+      "objects": 22,
+      "commits": 4,
+      "default_files": 10,
+      "bundle_sha256": "4da1a499fbabdf3114eb8dc929afe5415792b97f34ca40655ede8afb2eeed715",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/agent-study/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "DR-skills",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "93736d28b2aaa21af9fdf0b3d375bb8993c40720"
+      },
+      "default_branch": "main",
+      "default_head": "93736d28b2aaa21af9fdf0b3d375bb8993c40720",
+      "default_tree": "68e7d19a4ad90a374b570a385aa0e835e3351ffa",
+      "objects": 14,
+      "commits": 1,
+      "default_files": 9,
+      "bundle_sha256": "981f2ecd38652fcc45303151ede851d5a6ecacc1414937fba2c3ca74075e12d5",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/DR-skills/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "coding-me",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/copilot/research-codebase-structure": "d3993ae8a5affeb6f27e2f2bec325b691e2ea9ec",
+        "refs/heads/main": "c2ff68db43f001f08f473721a2421dd135a54d86"
+      },
+      "default_branch": "main",
+      "default_head": "c2ff68db43f001f08f473721a2421dd135a54d86",
+      "default_tree": "070cb1848c19f8e93db69714c9af1986aeab4c9b",
+      "objects": 355,
+      "commits": 8,
+      "default_files": 92,
+      "bundle_sha256": "caef6ae5597a2e445f3cf61c02fc6f1ac0afdb6fd76251c9f7f6df4afdf7c4df",
+      "archive_refs": {
+        "refs/heads/copilot/research-codebase-structure": "refs/heads/archive/coding-me/copilot/research-codebase-structure",
+        "refs/heads/main": "refs/heads/archive/coding-me/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "CuaOS-api-verison",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "26c72d2c09b376adea0cface4e42c509f32d5c8c"
+      },
+      "default_branch": "main",
+      "default_head": "26c72d2c09b376adea0cface4e42c509f32d5c8c",
+      "default_tree": "7e3ec4d1668e3bc9db917843fb3b8f7f8ff49a0a",
+      "objects": 262,
+      "commits": 65,
+      "default_files": 41,
+      "bundle_sha256": "116b3d6afc4cbc0938b34418063a9af563d4ffe5c62524bf4d2cc603d78700c7",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/CuaOS-api-verison/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "sideshell",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "fbf293e8b6382f5b04a71f67dbdc20bfaabf4333"
+      },
+      "default_branch": "main",
+      "default_head": "fbf293e8b6382f5b04a71f67dbdc20bfaabf4333",
+      "default_tree": "dd142c7105f2fc197a6f9287997550c19ea073be",
+      "objects": 303,
+      "commits": 12,
+      "default_files": 77,
+      "bundle_sha256": "b96934466c8369eefc92df9a85d6ed8d1665727856035646ef9dce9b03118375",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/sideshell/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "vibecoding-board",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "8dd8d3cb7200d2ed71461c3b68de8b9de3ef832b"
+      },
+      "default_branch": "main",
+      "default_head": "8dd8d3cb7200d2ed71461c3b68de8b9de3ef832b",
+      "default_tree": "421ba49392f57c9b97dce43c3c5c806ecd8449e8",
+      "objects": 858,
+      "commits": 29,
+      "default_files": 186,
+      "bundle_sha256": "d2fd29287850cdefded7cbaeb50b1c75847f48c6d3e84126c97b2373a54dd16e",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/vibecoding-board/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "cube-visualizer",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "5552f631eaa7ec9f1146de9f1be3efe05cf5a3ce"
+      },
+      "default_branch": "main",
+      "default_head": "5552f631eaa7ec9f1146de9f1be3efe05cf5a3ce",
+      "default_tree": "6850bd712d72ba808d440cba2e03c8667d6869d2",
+      "objects": 26,
+      "commits": 3,
+      "default_files": 14,
+      "bundle_sha256": "05e324f93344d1910026504f1741037585f6f5d4d7025daf92304e544a031279",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/cube-visualizer/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "gomoku",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "d7ddc040281cd955bec8c70039bf7e73a54bdd1b"
+      },
+      "default_branch": "main",
+      "default_head": "d7ddc040281cd955bec8c70039bf7e73a54bdd1b",
+      "default_tree": "05f5a0e5217f499627d92c51625b74ea7e8fdb10",
+      "objects": 22,
+      "commits": 3,
+      "default_files": 10,
+      "bundle_sha256": "f9b2c013d9a1f63b270f5376dbd1938d37059d9bb4410d5c524d47f9b79ca48b",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/gomoku/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "gomoku-final-review",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "a83a819f006c53d426db0e1b4b2534273b7afda4"
+      },
+      "default_branch": "main",
+      "default_head": "a83a819f006c53d426db0e1b4b2534273b7afda4",
+      "default_tree": "ea1c58a4ca25ee24591a7ce5d835193a07061ed1",
+      "objects": 32,
+      "commits": 1,
+      "default_files": 27,
+      "bundle_sha256": "266a8316af04944eba3215c9ebcf4ee400c5012827dc19876fd1683d0b8863e2",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/gomoku-final-review/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "gomoku-visualizer",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "1886587d876a83bd2815f999b64caa03cd6a11d8"
+      },
+      "default_branch": "main",
+      "default_head": "1886587d876a83bd2815f999b64caa03cd6a11d8",
+      "default_tree": "8fc3d17a073f448496e7e491a1052206d1a52ac0",
+      "objects": 56,
+      "commits": 10,
+      "default_files": 10,
+      "bundle_sha256": "c6a969773f10c9a48fc0cb12985961420bf5be284720ca7a045c04512d4513d5",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/gomoku-visualizer/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "php-SER-libs-by-fine-1",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "81c4bdf359c062ab681ced8fa16c90583b216d64"
+      },
+      "default_branch": "main",
+      "default_head": "81c4bdf359c062ab681ced8fa16c90583b216d64",
+      "default_tree": "cc065a93bfad931bd2a010730a97a7e007c87280",
+      "objects": 79,
+      "commits": 8,
+      "default_files": 43,
+      "bundle_sha256": "84e1f6d96653e37253cc787de0ffe979eeedfc3123f857790a78e9d201087a36",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/php-SER-libs-by-fine-1/main"
+      },
+      "directory_imported": true
+    }
+  ],
+  "exclusions": [],
+  "source_deletion_executor": "parent after independent remote verification"
+}

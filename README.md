@@ -24,3 +24,35 @@ To inspect original history, use `git log archive/<repository>/main` or the bran
 ## Licenses
 
 Original license files remain in their source directories, unchanged. There is no new blanket license for this collection; each source's existing terms continue to apply. Repositories without an explicit license do not acquire a new license through this archive.
+
+
+## Current archive index — batch 04
+
+26 source directories. This batch adds 11 repositories, 144 original commits and 519 default-tree file entries. Original object IDs and ref mappings are recorded in [the batch manifest](ARCHIVE-MANIFEST-BATCH-04.json).
+
+- [25-CS336](25-CS336/)
+- [agent-study](agent-study/)
+- [Artificial-Intelligence-and-Python-Programming](Artificial-Intelligence-and-Python-Programming/)
+- [coding-me](coding-me/)
+- [cs224n](cs224n/)
+- [cs61a-2024](cs61a-2024/)
+- [cs61b-new](cs61b-new/)
+- [cs61c-lab](cs61c-lab/)
+- [csci-0300-sp25-labs](csci-0300-sp25-labs/)
+- [CuaOS-api-verison](CuaOS-api-verison/)
+- [cube-visualizer](cube-visualizer/)
+- [discrete-math](discrete-math/)
+- [Django-for-me](Django-for-me/)
+- [DR-skills](DR-skills/)
+- [DS-100-sp25](DS-100-sp25/)
+- [fa25-hands-in-hands](fa25-hands-in-hands/)
+- [gomoku](gomoku/)
+- [gomoku-final-review](gomoku-final-review/)
+- [gomoku-visualizer](gomoku-visualizer/)
+- [php-SER-libs-by-fine-1](php-SER-libs-by-fine-1/)
+- [recite-your-words](recite-your-words/)
+- [sideshell](sideshell/)
+- [todolist](todolist/)
+- [todolist-app](todolist-app/)
+- [vibecoding-board](vibecoding-board/)
+- [YOJs](YOJs/)
