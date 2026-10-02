@@ -1,0 +1,136 @@
+[
+  {
+    "name": "awesome-ai-research-writing",
+    "source_url": "https://github.com/ZnnnnnH2/awesome-ai-research-writing",
+    "upstream_url": "https://github.com/Leey21/awesome-ai-research-writing",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "9b60d0ab9cde92e597c7291e80d6ce8d70da3f6e"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "codex",
+    "source_url": "https://github.com/ZnnnnnH2/codex",
+    "upstream_url": "https://github.com/openai/codex",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "e3f44ca3b30f85c139f717d271fa6f0e5aa64560"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "claude-code",
+    "source_url": "https://github.com/ZnnnnnH2/claude-code",
+    "upstream_url": "https://github.com/codeaashu/claude-code",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "126c31154f72ec9babb39142d173ef8c2a5a9803"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "MemGuard",
+    "source_url": "https://github.com/ZnnnnnH2/MemGuard",
+    "upstream_url": "https://github.com/panxiaogong/MemGuard",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/fix/readme-duplicate-contribution-guide": "fa8b58561ce021a87ce71a8d8e2b04856d7a2279",
+      "refs/heads/main": "dbaefdc380378718a753e9b6f8f593dada85bde5"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "grok-build",
+    "source_url": "https://github.com/ZnnnnnH2/grok-build",
+    "upstream_url": "https://github.com/xai-org/grok-build",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "dd04f397b1d02f2272b092555669dfba1f01bc85"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "PayloadsAllTheThings",
+    "source_url": "https://github.com/ZnnnnnH2/PayloadsAllTheThings",
+    "upstream_url": "https://github.com/swisskyrepo/PayloadsAllTheThings",
+    "visibility": "public",
+    "default_branch": "master",
+    "refs": {
+      "refs/heads/master": "3fd2f8c4818c3a8b89ea4ad067bc0f5fcb7e8318"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "NJUCS",
+    "source_url": "https://github.com/ZnnnnnH2/NJUCS",
+    "upstream_url": "https://github.com/JackeyLea/NJUCS",
+    "visibility": "public",
+    "default_branch": "master",
+    "refs": {
+      "refs/heads/master": "afd055616f0a825dd16ddea4c83e0c9e1c9611f1"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "ruc-thesis-typst",
+    "source_url": "https://github.com/ZnnnnnH2/ruc-thesis-typst",
+    "upstream_url": "https://github.com/ruc-thesis/modern-ruc-thesis",
+    "visibility": "public",
+    "default_branch": "master",
+    "refs": {
+      "refs/heads/master": "d8d1108e55974e6be2169ab74e0d8de61594c3e8"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "sourcemap",
+    "source_url": "https://github.com/ZnnnnnH2/sourcemap",
+    "upstream_url": "https://github.com/ChinaSiro/claude-code-sourcemap",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "a8a678cb6244e6770e1e421767ff0987a1d95549"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "RUCxiaolaba-Advanced-Search",
+    "source_url": "https://github.com/ZnnnnnH2/RUCxiaolaba-Advanced-Search",
+    "upstream_url": "https://github.com/seraphic663/RUCxiaolaba-Advanced-Search",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "3080ee5bd7172085769fa8d36ee1262456bba6aa"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "swot",
+    "source_url": "https://github.com/ZnnnnnH2/swot",
+    "upstream_url": "https://github.com/JetBrains/swot",
+    "visibility": "public",
+    "default_branch": "master",
+    "refs": {
+      "refs/heads/add-ruc-edu-cn": "95368aad119378b5ab37395a98bed262796542c2",
+      "refs/heads/master": "95368aad119378b5ab37395a98bed262796542c2"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  },
+  {
+    "name": "Zotero-WebAI",
+    "source_url": "https://github.com/ZnnnnnH2/Zotero-WebAI",
+    "upstream_url": "https://github.com/lineex/Zotero-WebAI",
+    "visibility": "public",
+    "default_branch": "main",
+    "refs": {
+      "refs/heads/main": "7d92725847bdad7c600020e183d6cf4f72b2aeba"
+    },
+    "dependency_audit_result": "no_detected_dependency"
+  }
+]

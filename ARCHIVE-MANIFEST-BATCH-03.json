@@ -1,0 +1,207 @@
+{
+  "date": "2026-10-02",
+  "target": "ZnnnnnH2/learning-archive",
+  "visibility": "public",
+  "previous_main": "02aa1c7ce3892dc6882b7ac363981e5c5e13c99d",
+  "method": "Non-squashed default-branch subtree imports; unchanged original commits and namespaced refs. Other branches and PR refs preserved separately.",
+  "sources": [
+    {
+      "name": "cs61b-new",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/develop-merge": "eac28556ca43b1417dafff7e7a94e8df02f5a66e",
+        "refs/heads/main": "5522915ae1243ef44fdf4884c08d07ffee5c0b0d"
+      },
+      "default_branch": "main",
+      "default_head": "5522915ae1243ef44fdf4884c08d07ffee5c0b0d",
+      "default_tree": "6810d48f360a5ac272848a6117a41b2eed5a9506",
+      "objects": 805,
+      "commits": 100,
+      "default_files": 217,
+      "bundle_sha256": "538fd4593b51abb507843e0bd7c64b0ee9ac61fd3bb2672a1034ae1981f41885",
+      "archive_refs": {
+        "refs/heads/develop-merge": "refs/heads/archive/cs61b-new/develop-merge",
+        "refs/heads/main": "refs/heads/archive/cs61b-new/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "Artificial-Intelligence-and-Python-Programming",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "b3cbf0dac442425613e9527db73f9fb7524f10cc"
+      },
+      "default_branch": "main",
+      "default_head": "b3cbf0dac442425613e9527db73f9fb7524f10cc",
+      "default_tree": "677c85eddc75d19e15a7deefb9cf3cf8d632e27c",
+      "objects": 405,
+      "commits": 20,
+      "default_files": 267,
+      "bundle_sha256": "c055f52c8acd239965788e3ad350bfda4d81418a5c5ca533330466884d810178",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/Artificial-Intelligence-and-Python-Programming/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "fa25-hands-in-hands",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "e696ae7c7e9c7c7e12be43d828a8da9c7ffc26c0"
+      },
+      "default_branch": "main",
+      "default_head": "e696ae7c7e9c7c7e12be43d828a8da9c7ffc26c0",
+      "default_tree": "85211996ebdfd9420cd6a7afb48cbb28bdcfe309",
+      "objects": 153,
+      "commits": 7,
+      "default_files": 396,
+      "bundle_sha256": "5a3a8b88960f2a3bcb9f574dc5190389cc5b22af653803da968a3dd5491f0518",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/fa25-hands-in-hands/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "YOJs",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "777d0c46ffc643bbfd1b3761eaef5c84f4097b0f"
+      },
+      "default_branch": "main",
+      "default_head": "777d0c46ffc643bbfd1b3761eaef5c84f4097b0f",
+      "default_tree": "3ac30810c23416b043b9f957432579ebff7fd528",
+      "objects": 651,
+      "commits": 19,
+      "default_files": 386,
+      "bundle_sha256": "31232948fd4a2aa7c5afc5450d09124ccfa58642b75601473fa0e258a1bc4f7c",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/YOJs/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "discrete-math",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "a3e08ca2b2f407a7b1213d0a676183e8d2419979"
+      },
+      "default_branch": "main",
+      "default_head": "a3e08ca2b2f407a7b1213d0a676183e8d2419979",
+      "default_tree": "5360b42b21efcfb61ec0db46e5ca9e03ed23d01e",
+      "objects": 116,
+      "commits": 18,
+      "default_files": 73,
+      "bundle_sha256": "3115edad477d509a46210c8466d6a443e688852c2d7dcc333b57c82097a005a8",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/discrete-math/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "DS-100-sp25",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/lab01": "2954e30d77582e0751df50620c0bb8e60c1d784c",
+        "refs/heads/main": "3f4d3a32ea31a8f1720526830ba2877e5903dbb0",
+        "refs/pull/1/head": "2954e30d77582e0751df50620c0bb8e60c1d784c",
+        "refs/pull/2/head": "c2f0d6dfc7a82c8960e236c4920f1eb4f95ab028",
+        "refs/pull/3/head": "a4c9c438ef57dc2b9efb6cce3ac3da1df7cfba9c",
+        "refs/pull/4/head": "4c6004babd269066b312940469e9017bf711fdc9",
+        "refs/pull/5/head": "768f657865cff0cfaab68d57b8439107cb9e9024",
+        "refs/pull/6/head": "5cac0b0c06f7ad5b50f306ef12b94103acf2655f"
+      },
+      "default_branch": "main",
+      "default_head": "3f4d3a32ea31a8f1720526830ba2877e5903dbb0",
+      "default_tree": "48e20b60b4ab93fe84fc1fa91d84940e8f217969",
+      "objects": 857,
+      "commits": 28,
+      "default_files": 389,
+      "bundle_sha256": "0809539cd3993f7c4e216defe646cdd58024eebc072e0e316f6a76800b9ca437",
+      "archive_refs": {
+        "refs/heads/lab01": "refs/heads/archive/DS-100-sp25/lab01",
+        "refs/heads/main": "refs/heads/archive/DS-100-sp25/main",
+        "refs/pull/1/head": "refs/tags/archive/DS-100-sp25/pull/1/head",
+        "refs/pull/2/head": "refs/tags/archive/DS-100-sp25/pull/2/head",
+        "refs/pull/3/head": "refs/tags/archive/DS-100-sp25/pull/3/head",
+        "refs/pull/4/head": "refs/tags/archive/DS-100-sp25/pull/4/head",
+        "refs/pull/5/head": "refs/tags/archive/DS-100-sp25/pull/5/head",
+        "refs/pull/6/head": "refs/tags/archive/DS-100-sp25/pull/6/head"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "recite-your-words",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "c5984092125069a097c0771109efed9c25656e04"
+      },
+      "default_branch": "main",
+      "default_head": "c5984092125069a097c0771109efed9c25656e04",
+      "default_tree": "5cb7ad363894e01df05e9232f16c0a4dc899d25f",
+      "objects": 1003,
+      "commits": 2,
+      "default_files": 903,
+      "bundle_sha256": "c5424096186b46d20d37b6e13d3a7481533220900f98c25f453c2927a622cc83",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/recite-your-words/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "todolist",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "f92d17a45b4475466ae8f0c5cc97010ff6c11898"
+      },
+      "default_branch": "main",
+      "default_head": "f92d17a45b4475466ae8f0c5cc97010ff6c11898",
+      "default_tree": "78bf57f44b1c9bb716ca0248be60b6488bb66548",
+      "objects": 154,
+      "commits": 11,
+      "default_files": 47,
+      "bundle_sha256": "f2f70c3d9bdcb6ae85d0dc1458503dea0652833b15a08a2172d699d41efda248",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/todolist/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "todolist-app",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/main": "77d96afb4e0db16286c4abc6b018fffb1c02ffa9"
+      },
+      "default_branch": "main",
+      "default_head": "77d96afb4e0db16286c4abc6b018fffb1c02ffa9",
+      "default_tree": "21661b63fe191b2a01a3680cc5db0f456b890d75",
+      "objects": 2161,
+      "commits": 6,
+      "default_files": 776,
+      "bundle_sha256": "1b232b4139e0e60ccc4645ee7d2e6b153ef5e4a355c8a036664f19018ee40216",
+      "archive_refs": {
+        "refs/heads/main": "refs/heads/archive/todolist-app/main"
+      },
+      "directory_imported": true
+    },
+    {
+      "name": "first-contributions",
+      "visibility": "public",
+      "original_refs": {
+        "refs/heads/add-myname": "f50fe521f1ca41ef53ac7b6d4be7765f1be70767",
+        "refs/heads/main": "2bc5a621389da27058244867c34347bd23064394"
+      },
+      "default_branch": "main",
+      "default_head": "2bc5a621389da27058244867c34347bd23064394",
+      "default_tree": "bd81c50a1c95f1e0004da0c324bf3a92ff115412",
+      "objects": 10061,
+      "commits": 3248,
+      "default_files": 341,
+      "bundle_sha256": "1b04b548a5b05a928718032bbebcaf944431d3e67225995f53533c8de2901af7",
+      "archive_refs": {
+        "refs/heads/add-myname": "refs/heads/archive/first-contributions/add-myname",
+        "refs/heads/main": "refs/heads/archive/first-contributions/main"
+      },
+      "directory_imported": false
+    }
+  ]
+}
