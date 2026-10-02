@@ -1,0 +1,9 @@
+/build/
+/build_*/
+*.o
+gomoku_player_gcc.exe
+findings.md
+progress.md
+task_plan.md
+*.exe
+.cache

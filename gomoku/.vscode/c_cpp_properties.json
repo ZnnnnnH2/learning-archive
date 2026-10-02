@@ -1,0 +1,17 @@
+{
+  "configurations": [
+    {
+      "name": "Gomoku",
+      "includePath": [
+        "${workspaceFolder}/include",
+        "${workspaceFolder}/src",
+        "${workspaceFolder}/tests"
+      ],
+      "defines": [],
+      "cStandard": "c17",
+      "cppStandard": "c++17",
+      "intelliSenseMode": "windows-msvc-x64"
+    }
+  ],
+  "version": 4
+}
