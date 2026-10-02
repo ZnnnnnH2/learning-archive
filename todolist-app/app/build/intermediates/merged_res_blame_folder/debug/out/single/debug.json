@@ -1,0 +1,82 @@
+[
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_ic_check_filled.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\ic_check_filled.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\xml_todo_list_widget_info.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\xml\\todo_list_widget_info.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\layout_activity_main.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\layout\\activity_main.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\xml_backup_rules.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\xml\\backup_rules.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_ic_launcher_foreground.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\ic_launcher_foreground.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\layout_widget_item.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\layout\\widget_item.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\layout_widget_layout.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\layout\\widget_layout.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\mipmap-anydpi-v26_ic_launcher_round.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\mipmap-anydpi-v26\\ic_launcher_round.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\xml_network_security_config.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\xml\\network_security_config.xml"
+    },
+    {
+        "merged": "com.example.hybridtodo.app-merged_res-31:/layout_widget_item.xml.flat",
+        "source": "com.example.hybridtodo.app-main-33:/layout/widget_item.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_ic_launcher_background.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\ic_launcher_background.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_ic_check_outline.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\ic_check_outline.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_bg_widget_rounded.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\bg_widget_rounded.xml"
+    },
+    {
+        "merged": "com.example.hybridtodo.app-merged_res-31:/layout_activity_add_task.xml.flat",
+        "source": "com.example.hybridtodo.app-main-33:/layout/activity_add_task.xml"
+    },
+    {
+        "merged": "com.example.hybridtodo.app-merged_res-31:/layout_widget_layout.xml.flat",
+        "source": "com.example.hybridtodo.app-main-33:/layout/widget_layout.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\mipmap-anydpi-v26_ic_launcher.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\mipmap-anydpi-v26\\ic_launcher.xml"
+    },
+    {
+        "merged": "com.example.hybridtodo.app-merged_res-31:/drawable_ic_add.xml.flat",
+        "source": "com.example.hybridtodo.app-main-33:/drawable/ic_add.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\xml_data_extraction_rules.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\xml\\data_extraction_rules.xml"
+    },
+    {
+        "merged": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-merged_res-31:\\drawable_ic_refresh.xml.flat",
+        "source": "C:\\Users\\ZnH2\\.gradle\\daemon\\9.0-milestone-1\\com.example.hybridtodo.app-main-33:\\drawable\\ic_refresh.xml"
+    },
+    {
+        "merged": "com.example.hybridtodo.app-merged_res-31:/drawable_ic_filter.xml.flat",
+        "source": "com.example.hybridtodo.app-main-33:/drawable/ic_filter.xml"
+    }
+]

@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Hybrid Todo</string>
+    <string name="widget_title">待办事项</string>
+    <string name="no_tasks">No tasks, relax!</string>
+    <string name="add_task">添加待办</string>
+    <string name="filter_tasks">切换已完成过滤</string>
+    <string name="refresh">刷新</string>
+    <string name="check_task">标记完成状态</string>
+    <string name="task_title_placeholder">Task Title</string>
+    <string name="new_task_title">新待办</string>
+    <string name="task_title_hint">输入待办标题</string>
+    <string name="save">保存</string>
+    <string name="cancel">取消</string>
+    <string name="adding_task">正在保存...</string>
+</resources>

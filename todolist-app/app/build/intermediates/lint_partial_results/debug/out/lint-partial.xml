@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<incidents format="6" by="lint 8.2.0" type="partial_results">
+    <map id="UnsafeIntentLaunch">
+            <map id="unprotected">
+                <entry
+                    name="com.example.hybridtodo.ui.MainActivity"
+                    boolean="true"/>
+                <entry
+                    name="com.example.hybridtodo.widget.TodoListWidget"
+                    boolean="true"/>
+            </map>
+    </map>
+    <map id="UnusedResources">
+        <location id="R.color.purple_200"
+            file="${:app*debug*MAIN*sourceProvider*0*resDir*0}/values/colors.xml"
+            line="3"
+            column="12"
+            startOffset="64"
+            endLine="3"
+            endColumn="29"
+            endOffset="81"/>
+        <entry
+            name="model"
+            string="attr[colorPrimaryVariant(R)],color[purple_200(D),black(U),priority_medium(U),teal_200(U),priority_low(U),white(U),teal_700(U),purple_700(U),purple_500(U),priority_high(U)],drawable[ic_check_outline(U),bg_widget_rounded(U),ic_refresh(U),ic_launcher_foreground(U),ic_launcher_background(U),ic_check_filled(U)],id[webview(U),tv_title(U),btn_refresh(U),empty_view(U),widget_item_root(U),iv_check(U),widget_list(U),view_priority(U),tv_task_title(U)],layout[activity_main(U),widget_item(U),widget_layout(U)],mipmap[ic_launcher_round(U),ic_launcher(U)],string[widget_title(U),app_name(U),no_tasks(U)],style[Theme_HybridTodo(U),Theme_MaterialComponents_DayNight_NoActionBar(R)],xml[network_security_config(U),data_extraction_rules(U),backup_rules(U),todo_list_widget_info(U)];1b^b,1c^c^1f^d^12^21,1d^f^e,1e^f^e,22^23^9^8^6^4^7^2^0,27^1c;;;"/>
+    </map>
+
+</incidents>

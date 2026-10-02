@@ -1,0 +1,4 @@
+com.example.hybridtodo.test.app-androidTest-0 D:\everythingaboutprograming\todolistapp\app\build\generated\res\resValues\androidTest\debug
+com.example.hybridtodo.test.app-mergeDebugAndroidTestResources-1 D:\everythingaboutprograming\todolistapp\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\merged.dir
+com.example.hybridtodo.test.app-mergeDebugAndroidTestResources-2 D:\everythingaboutprograming\todolistapp\app\build\intermediates\incremental\debugAndroidTest\mergeDebugAndroidTestResources\stripped.dir
+com.example.hybridtodo.test.app-merged_res-3 D:\everythingaboutprograming\todolistapp\app\build\intermediates\merged_res\debugAndroidTest
