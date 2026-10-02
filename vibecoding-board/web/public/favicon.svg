@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <defs>
+    <linearGradient id="board-bg" x1="8" y1="6" x2="56" y2="58" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F172A" />
+      <stop offset="0.58" stop-color="#1D4ED8" />
+      <stop offset="1" stop-color="#22D3EE" />
+    </linearGradient>
+    <linearGradient id="board-panel" x1="16" y1="12" x2="48" y2="52" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0B1120" stop-opacity="0.22" />
+      <stop offset="1" stop-color="#0F172A" stop-opacity="0.5" />
+    </linearGradient>
+    <linearGradient id="board-route" x1="22" y1="32" x2="40.5" y2="32" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#67E8F9" />
+      <stop offset="1" stop-color="#F8FAFC" />
+    </linearGradient>
+    <linearGradient id="board-hub" x1="42" y1="26" x2="51" y2="38" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F8FAFC" stop-opacity="0.94" />
+      <stop offset="1" stop-color="#BFDBFE" stop-opacity="0.92" />
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="56" height="56" rx="18" fill="url(#board-bg)" />
+  <rect x="7.5" y="7.5" width="49" height="49" rx="14.5" stroke="#E0F2FE" stroke-opacity="0.18" />
+  <rect x="12" y="12" width="40" height="40" rx="12" fill="url(#board-panel)" stroke="#E0F2FE" stroke-opacity="0.14" />
+
+  <path d="M20 20H44" stroke="#E0F2FE" stroke-opacity="0.06" stroke-width="1.5" />
+  <path d="M20 32H44" stroke="#E0F2FE" stroke-opacity="0.08" stroke-width="1.5" />
+  <path d="M20 44H44" stroke="#E0F2FE" stroke-opacity="0.06" stroke-width="1.5" />
+
+  <path d="M22 18C31.5 18 36 22 42 29" stroke="#BFDBFE" stroke-opacity="0.68" stroke-width="4" stroke-linecap="round" />
+  <path d="M22 32H40.5" stroke="url(#board-route)" stroke-width="5" stroke-linecap="round" />
+  <path d="M22 46C31.5 46 36 42 42 35" stroke="#BFDBFE" stroke-opacity="0.68" stroke-width="4" stroke-linecap="round" />
+
+  <circle cx="18" cy="18" r="3.75" fill="#E2E8F0" fill-opacity="0.95" />
+  <circle cx="18" cy="32" r="6.75" fill="#22D3EE" fill-opacity="0.18" />
+  <circle cx="18" cy="32" r="4.5" fill="#67E8F9" />
+  <circle cx="18" cy="46" r="3.75" fill="#E2E8F0" fill-opacity="0.95" />
+
+  <rect x="40.5" y="25.5" width="12" height="13" rx="4.25" fill="url(#board-hub)" stroke="#F8FAFC" stroke-opacity="0.72" stroke-width="1.5" />
+  <path d="M45 29.5V34.5" stroke="#0F172A" stroke-opacity="0.82" stroke-width="1.5" stroke-linecap="round" />
+  <path d="M48 29.5V34.5" stroke="#0F172A" stroke-opacity="0.58" stroke-width="1.5" stroke-linecap="round" />
+</svg>

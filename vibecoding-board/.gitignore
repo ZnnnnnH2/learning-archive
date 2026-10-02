@@ -1,0 +1,16 @@
+.venv/
+.uv-cache/
+__pycache__/
+.pytest_cache/
+.pytest-tmp/
+pytest-cache/
+pytest-temp/
+*.egg-info/
+test-workspaces/
+web/node_modules/
+web/.npm-cache/
+config.yaml
+data/metrics/
+data/**/*.jsonl
+.claude/
+data/traces/
