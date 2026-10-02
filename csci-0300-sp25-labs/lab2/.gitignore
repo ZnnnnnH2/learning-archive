@@ -1,0 +1,9 @@
+linked_list
+*.o
+
+
+*~
+\#*#
+.\#*
+
+.DS_Store
