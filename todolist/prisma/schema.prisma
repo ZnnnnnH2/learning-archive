@@ -1,0 +1,35 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  createdAt   DateTime @default(now())
+  isCompleted Boolean  @default(false)
+  priority    String   @default("Medium") // Low, Medium, High
+  dueDate           DateTime?
+  isRecurring       Boolean  @default(false)
+  recurringInterval Int?
+  recurringUnit     String?   // "day", "week", "month"
+  parentId    String?
+  sortOrder   Int      @default(0)
+  parent      Task?    @relation("SubTasks", fields: [parentId], references: [id], onDelete: Cascade)
+  subTasks    Task[]   @relation("SubTasks")
+
+  @@index([parentId])
+  @@index([sortOrder])
+}

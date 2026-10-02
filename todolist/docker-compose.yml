@@ -1,0 +1,13 @@
+services:
+  todolist:
+    image: znnnnh2/todolist:latest
+    container_name: my-todo-app
+    restart: always
+    ports:
+      - "80:3000"
+    environment:
+      # 数据库文件在 /app/data 目录下
+      - DATABASE_URL=file:/app/data/dev.db
+    volumes:
+      # 只挂载数据目录，不覆盖代码
+      - ./data:/app/data
